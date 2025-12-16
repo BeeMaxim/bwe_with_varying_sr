@@ -65,7 +65,6 @@ class Trainer(BaseTrainer):
         if self.is_train:
             self._clip_grad_norm(self.model.mpd)
             self._clip_grad_norm(self.model.msd)
-
         if self.is_train:
             disc_loss.backward()
             self.disc_optimizer.step()
@@ -81,7 +80,6 @@ class Trainer(BaseTrainer):
         batch["msd_fake_feats"] = msd_fake_feats
         batch["msd_gt_feats"] = msd_gt_feats
 
-
         batch["mel_spec_fake"] = self.create_mel_spec( batch["generated_wav"].squeeze(1))
         batch["mel_spec_hr"] = self.create_mel_spec( target_wav.squeeze(1))
         
@@ -89,7 +87,6 @@ class Trainer(BaseTrainer):
         mpd_feats_gen_loss, msd_feats_gen_loss,\
         mel_spec_loss, gen_loss =\
             self.criterion.generator_loss(batch)
-
 
         if self.is_train:
             self._clip_grad_norm(self.model.generator)

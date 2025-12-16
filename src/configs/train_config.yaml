@@ -24,9 +24,9 @@ disc_lr_scheduler:
 loss_function:
   _target_: src.loss.HiFiGANLoss
 trainer:
-  log_step: 1
-  n_epochs: 1
-  epoch_len: 2
+  log_step: 200
+  n_epochs: 100
+  epoch_len: 5000
   device_tensors: ["wav_lr", "wav_hr", "melspec_lr", "melspec_hr"] # which tensors should be on device (ex. GPU)
   resume_from: null # null or path to the checkpoint dir with *.pth and config.yaml
   device: auto # device name or "auto"

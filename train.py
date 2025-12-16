@@ -22,6 +22,7 @@ def main(config):
     Args:
         config (DictConfig): hydra experiment config.
     """
+    print('START')
     set_random_seed(config.trainer.seed)
 
     project_config = OmegaConf.to_container(config)
@@ -32,6 +33,7 @@ def main(config):
         device = "cuda" if torch.cuda.is_available() else "cpu"
     else:
         device = config.trainer.device
+    print(device)
 
     # setup text_encoder
 
@@ -41,7 +43,7 @@ def main(config):
 
     # build model architecture, then print to console
     model = instantiate(config.model).to(device)
-    logger.info(model)
+    #logger.info(model)
 
     # get function handles of loss and metrics
     loss_function = instantiate(config.loss_function).to(device)

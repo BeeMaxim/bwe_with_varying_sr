@@ -2,6 +2,7 @@ import torch
 from torch import nn
 import torchaudio
 import librosa
+import numpy as np
 
 
 
@@ -33,7 +34,7 @@ class MelSpectrogram(nn.Module):
             fmin=f_min,
             fmax=f_max
         ).T
-        self.mel_spectrogram.mel_scale.fb.copy_(torch.tensor(mel_basis))
+        self.mel_spectrogram.mel_scale.fb.copy_(torch.tensor(mel_basis, dtype=torch.float32))
 
     def forward(self, audio: torch.Tensor) -> torch.Tensor:
         """
