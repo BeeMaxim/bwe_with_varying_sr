@@ -52,56 +52,43 @@ class Trainer(BaseTrainer):
         if self.is_train:
             self.disc_optimizer.zero_grad()
 
-        mpd_gt_out, _, mpd_fake_out, _ = self.model.mpd(target_wav, wav_fake.detach())
-        msd_gt_out, _,  msd_fake_out, _ = self.model.msd(target_wav, wav_fake.detach())
-        batch["mpd_gt_out"] = mpd_gt_out
-        batch["mpd_fake_out"] = mpd_fake_out
-        batch["msd_gt_out"] = msd_gt_out
-        batch["msd_fake_out"] = msd_fake_out
+        for disc_name, disc in self.model.discriminators.items():
+            gt_out, _, fake_out, _ = disc(target_wav, wav_fake.detach(), **batch)
+            batch[f"{disc_name}_gt_out"] = gt_out
+            batch[f"{disc_name}_fake_out"] = fake_out
 
-
-        mpd_disc_loss, msd_disc_loss, disc_loss = self.criterion.discriminator_loss(batch)
+        disc_losses, disc_loss = self.criterion.discriminator_loss(batch)
 
         if self.is_train:
-            self._clip_grad_norm(self.model.mpd)
-            self._clip_grad_norm(self.model.msd)
-        if self.is_train:
+            for _, disc in self.model.discriminators.items():
+                self._clip_grad_norm(disc)
             disc_loss.backward()
             self.disc_optimizer.step()
             self.gen_optimizer.zero_grad()
 
-        #disc call for generator loss
-        _, mpd_gt_feats, mpd_fake_out, mpd_fake_feats = self.model.mpd(target_wav, wav_fake)
-        _, msd_gt_feats, msd_fake_out, msd_fake_feats = self.model.msd(target_wav, wav_fake)     
-        batch["mpd_fake_out"] = mpd_fake_out
-        batch["mpd_fake_feats"] = mpd_fake_feats
-        batch["mpd_gt_feats"] = mpd_gt_feats
-        batch["msd_fake_out"] = msd_fake_out
-        batch["msd_fake_feats"] = msd_fake_feats
-        batch["msd_gt_feats"] = msd_gt_feats
+        # disc call for generator loss
+        for disc_name, disc in self.model.discriminators.items():
+            _, gt_feats, fake_out, fake_feats = disc(target_wav, wav_fake, **batch)
+            batch[f"{disc_name}_gt_feats"] = gt_feats
+            batch[f"{disc_name}_fake_out"] = fake_out
+            batch[f"{disc_name}_fake_feats"] = fake_feats
 
-        batch["mel_spec_fake"] = self.create_mel_spec( batch["generated_wav"].squeeze(1))
-        batch["mel_spec_hr"] = self.create_mel_spec( target_wav.squeeze(1))
+        batch["mel_spec_fake"] = self.create_mel_spec(batch["generated_wav"].squeeze(1))
+        batch["mel_spec_hr"] = self.create_mel_spec(target_wav.squeeze(1))
         
-        mpd_gen_loss, msd_gen_loss,\
-        mpd_feats_gen_loss, msd_feats_gen_loss,\
-        mel_spec_loss, gen_loss =\
-            self.criterion.generator_loss(batch)
+        adv_gen_losses, feats_gen_losses, mel_spec_loss, gen_loss = self.criterion.generator_loss(batch)
 
         if self.is_train:
             self._clip_grad_norm(self.model.generator)
             gen_loss.backward()
             self.gen_optimizer.step()
 
-
         batch["disc_loss"] = disc_loss
-        batch["mpd_gen_loss"] = mpd_gen_loss
-        batch["msd_gen_loss"] = msd_gen_loss
+
+        batch.update(adv_gen_losses)
+        batch.update(feats_gen_losses)
+        batch.update(disc_losses)
         batch["mel_spec_loss"] = mel_spec_loss
-        batch["mpd_disc_loss"] = mpd_disc_loss
-        batch["msd_disc_loss"] = msd_disc_loss
-        batch["mpd_feats_gen_loss"] = mpd_feats_gen_loss
-        batch["msd_feats_gen_loss"] = msd_feats_gen_loss
         batch["gen_loss"] = gen_loss
     
         for loss_name in self.config.writer.loss_names:

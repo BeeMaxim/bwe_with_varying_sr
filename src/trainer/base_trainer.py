@@ -194,8 +194,9 @@ class BaseTrainer:
         """
         self.is_train = True
         self.model.generator.train()
-        self.model.msd.train()
-        self.model.mpd.train()
+        for _, disc in self.model.discriminators.items():
+            disc.train()
+
         self.train_metrics.reset()
         self.writer.set_step((epoch - 1) * self.epoch_len)
         self.writer.add_scalar("epoch", epoch)
@@ -216,8 +217,8 @@ class BaseTrainer:
                 else:
                     raise e
             self.train_metrics.update("generator_grad_norm", self._get_grad_norm(self.model.generator.parameters()))
-            self.train_metrics.update("discriminator_grad_norm", self._get_grad_norm(itertools.chain(self.model.mpd.parameters(),\
-                                                                                                      self.model.msd.parameters())))
+            disc_params = itertools.chain(*[disc.parameters() for _, disc in self.model.discriminators.items()])
+            self.train_metrics.update("discriminator_grad_norm", self._get_grad_norm(disc_params))
 
             if batch_idx % self.log_step == 0:
                 self.writer.set_step((epoch - 1) * self.epoch_len + batch_idx)

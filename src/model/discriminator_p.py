@@ -44,7 +44,7 @@ class MultiPeriodDiscriminator(nn.Module):
                                                                              stride=stride,channels=channels)for period in periods])
 
 
-    def forward(self, x_gt, x_gen):
+    def forward(self, x_gt, x_gen, **batch):
         disc_outputs_gt = []
         disc_outputs_fake = []
         disc_features_gt = []

@@ -30,7 +30,7 @@ class MultiScaleDiscriminator(nn.Module):
                                                                         channels=channels, use_spectral=(i == 0)) for i in range(num_blocks)])
         self.pooling = nn.ModuleList([nn.AvgPool1d(4, 2, padding=2),nn.AvgPool1d(4, 2, padding=2)])
 
-    def forward(self, x_gt, x_fake):
+    def forward(self, x_gt, x_fake, **batch):
         disc_gt_outputs = []
         disc_gt_features = []
         disc_fake_outputs = []

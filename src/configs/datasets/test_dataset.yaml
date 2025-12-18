@@ -1,8 +1,8 @@
 test:
   _target_: src.datasets.VCTKDataset
   dataset_split_file: "src/VCTK_split_as_papers/test.txt"
-  vctk_wavs_dir_lr: /opt/software/datasets/VCTK/VCTK4kresampled
-  vctk_wavs_dir_hr: /opt/software/datasets/VCTK/VCTK16kresampled
+  vctk_wavs_dir_lr: D:\hifi_ssr\bwe_with_varying_sr\data\data\vctk_4hz
+  vctk_wavs_dir_hr: D:\hifi_ssr\bwe_with_varying_sr\data\data\vctk_16hz
   initial_sr: 4000
   target_sr: 16000
   segment_size: 8192

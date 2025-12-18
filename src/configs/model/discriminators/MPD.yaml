@@ -1,0 +1,5 @@
+  _target_: src.model.MultiPeriodDiscriminator
+  periods: [2, 3, 5, 7, 11]
+  kernel_size: 5
+  stride: 3
+  channels: [1, 32, 128, 512, 1024]

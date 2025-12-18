@@ -29,15 +29,8 @@ generator_config:
   norm_type: "weight"
   use_skip_connect: True
   waveunet_input: "both"
-mpd_config: 
-  periods: [2, 3, 5, 7, 11]
-  kernel_size: 5
-  stride: 3
-  channels: [1, 32, 128, 512, 1024]
 
-msd_config: 
-  num_blocks: 3
-  kernel_sizes: [15, 41, 41, 41, 41, 41, 5]
-  strides: [1, 2, 2, 4, 4, 1, 1]
-  groups: [1, 4, 16, 16, 16, 16, 1]
-  channels: [1, 128, 128, 256, 512, 1024, 1024, 1024]
+defaults:
+  - _self_
+  - discriminators@discriminators.msd: MSD
+  - discriminators@discriminators.mpd: MPD

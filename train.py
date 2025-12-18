@@ -22,7 +22,6 @@ def main(config):
     Args:
         config (DictConfig): hydra experiment config.
     """
-    print('START')
     set_random_seed(config.trainer.seed)
 
     project_config = OmegaConf.to_container(config)
@@ -57,7 +56,10 @@ def main(config):
             )
 
     trainable_params_gen = filter(lambda p: p.requires_grad, model.generator.parameters())
-    trainable_params_disc = list(filter(lambda p: p.requires_grad, model.mpd.parameters())) + list(filter(lambda p: p.requires_grad, model.msd.parameters()))
+    trainable_params_disc = []
+    for _, disc in model.discriminators.items():
+        trainable_params_disc += list(filter(lambda p: p.requires_grad, disc.parameters()))
+    
     gen_optimizer = instantiate(config.gen_optimizer, params=trainable_params_gen)
     disc_optimizer = instantiate(config.disc_optimizer, params=trainable_params_disc)
     gen_lr_scheduler = instantiate(config.gen_lr_scheduler, optimizer=gen_optimizer)

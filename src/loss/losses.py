@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 class DiscriminatorLoss(nn.Module):
     def __init__(self):
         super().__init__()
@@ -9,8 +10,8 @@ class DiscriminatorLoss(nn.Module):
     def forward(self, disc_gt_output, disc_predicted_output):
         loss = 0
         for gt_output, pred_output in zip(disc_gt_output, disc_predicted_output):
-            gt_loss = torch.mean((1 - gt_output) ** 2)
-            pred_loss = torch.mean(pred_output ** 2)
+            gt_loss = torch.mean((1 - gt_output)**2)
+            pred_loss = torch.mean(pred_output**2)
             loss += gt_loss + pred_loss
         return loss
 
@@ -22,7 +23,7 @@ class GeneratorLoss(nn.Module):
     def forward(self, dsc_output):
         loss = 0.0
         for predicted in dsc_output:
-            pred_loss = torch.mean((1 - predicted) ** 2)
+            pred_loss = torch.mean((1 - predicted)**2)
             loss += pred_loss
         return loss
     
@@ -45,14 +46,16 @@ class MelSpectrogramLoss(nn.Module):
 
     def forward(self, initial_spec, pred_spec):
         return F.l1_loss(pred_spec, initial_spec)
-    
+   
+
 class SpectrogramLoss(nn.Module):
     def __init__(self):
         super().__init__()
 
     def forward(self, initial_spec, pred_spec):
         return F.l1_loss(pred_spec, initial_spec)
-    
+
+  
 class HiFiGANLoss(nn.Module):
     def __init__(self):
         super().__init__()
@@ -60,27 +63,36 @@ class HiFiGANLoss(nn.Module):
         self.gen_loss = GeneratorLoss()
         self.melspec_loss = MelSpectrogramLoss()
         self.fm_loss = FeatureMatchingLoss()
-        
-        
+              
     def discriminator_loss(self, batch):
-        mpd_disc_loss = self.disc_loss(batch["mpd_gt_out"], batch["mpd_fake_out"])
-        msd_disc_loss = self.disc_loss(batch["msd_gt_out"], batch["msd_fake_out"])
-        return mpd_disc_loss, msd_disc_loss, mpd_disc_loss + msd_disc_loss
+        total_loss = 0
+        losses = {}
+        for key in batch:
+            if key.endswith("gt_out"):
+                disc_name = key[:-7]
+                disc_loss = self.disc_loss(batch[key], batch[f"{disc_name}_fake_out"])
+                losses[f"{disc_name}_disc_loss"] = disc_loss
+                total_loss = total_loss + disc_loss
+
+        return losses, total_loss
         
     def generator_loss(self, batch):
-        
-        mpd_gen_loss = self.gen_loss(batch["mpd_fake_out"])
-        msd_gen_loss = self.gen_loss(batch["msd_fake_out"])   
+        adv_losses = {}
+        feats_losses = {}
+        total_loss = 0
 
-        #TODO computation of mel specs here with given melSpecComputer as an argument
-        #for better generalization to other spectral losses
+        for key in batch:
+            if key.endswith("fake_out"):
+                disc_name = key[:-9]
+                adv_gen_loss = self.gen_loss(batch[key])
+                feats_gen_loss = self.fm_loss(batch[f"{disc_name}_gt_feats"], batch[f"{disc_name}_fake_feats"])
+                adv_losses[f"{disc_name}_gen_loss"] = adv_gen_loss
+                feats_losses[f"{disc_name}_feats_gen_loss"] = feats_gen_loss
+                total_loss = total_loss + 2 * adv_gen_loss + feats_gen_loss
+
+        # TODO computation of mel specs here with given melSpecComputer as an argument
+        # for better generalization to other spectral losses
         mel_spec_loss = self.melspec_loss(batch["mel_spec_hr"], batch["mel_spec_fake"])
+        total_loss = total_loss + 45 * mel_spec_loss
         
-        mpd_feats_gen_loss = self.fm_loss(batch["mpd_gt_feats"], batch["mpd_fake_feats"])
-        msd_feats_gen_loss = self.fm_loss(batch["msd_gt_feats"], batch["msd_fake_feats"])
-        
-        return mpd_gen_loss, msd_gen_loss, mpd_feats_gen_loss,\
-                msd_feats_gen_loss, mel_spec_loss,\
-                mpd_gen_loss + msd_gen_loss + 45*mel_spec_loss + 2*mpd_feats_gen_loss + 2*msd_feats_gen_loss
-        
-        
+        return adv_losses, feats_losses, mel_spec_loss, total_loss
