@@ -17,16 +17,16 @@ disc_optimizer:
   weight_decay: 0.01
 gen_lr_scheduler:
   _target_: torch.optim.lr_scheduler.ExponentialLR
-  gamma: 0.999
+  gamma: 0.99999
 disc_lr_scheduler:
   _target_: torch.optim.lr_scheduler.ExponentialLR
-  gamma: 0.999
+  gamma: 0.99999
 loss_function:
   _target_: src.loss.HiFiGANLoss
 trainer:
   log_step: 200
   n_epochs: 100
-  epoch_len: 5000
+  epoch_len: 2
   device_tensors: ["wav_lr", "wav_hr", "melspec_lr", "melspec_hr"] # which tensors should be on device (ex. GPU)
   resume_from: null # null or path to the checkpoint dir with *.pth and config.yaml
   device: auto # device name or "auto"

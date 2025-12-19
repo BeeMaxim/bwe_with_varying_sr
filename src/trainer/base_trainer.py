@@ -239,8 +239,9 @@ class BaseTrainer:
                 self.train_metrics.reset()
             if batch_idx + 1 >= self.epoch_len:
                 break
-        self.gen_lr_scheduler.step()
-        self.disc_lr_scheduler.step()
+
+            self.gen_lr_scheduler.step()
+            self.disc_lr_scheduler.step()
 
         logs = last_train_metrics
 
@@ -263,8 +264,9 @@ class BaseTrainer:
         """
         self.is_train = False
         self.model.generator.eval()
-        self.model.mpd.eval()
-        self.model.msd.eval()
+        for _, disc in self.model.discriminators.items():
+            disc.eval()
+
         self.evaluation_metrics.reset()
         self.writer.mode = part
         with torch.no_grad():
@@ -292,9 +294,7 @@ class BaseTrainer:
             self.metrics['inference'][i].result['std'] = []
 
         self._log_scalars(self.evaluation_metrics)
-        
-        
-
+             
         return self.evaluation_metrics.result()
 
     def _monitor_performance(self, logs, not_improved_count):

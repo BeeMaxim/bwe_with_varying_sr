@@ -204,14 +204,14 @@ class HiFiPlusGenerator(torch.nn.Module):
 
     def forward(self, x_reference):
         x = self.apply_spectralunet(x_reference)
-        x = self.hifi(x)
+        x, outs = self.hifi(x)
         if self.use_waveunet:
             x = self.apply_waveunet(x)
 
         x = self.conv_post(x)
         x = torch.tanh(x)
 
-        return x
+        return x, outs
 
 class A2AHiFiPlusGenerator(HiFiPlusGenerator):
     def __init__(
@@ -302,8 +302,6 @@ class A2AHiFiPlusGenerator(HiFiPlusGenerator):
             )
 
     
-    
-
     @staticmethod
     def get_stft(x, sampling_rate):
         shape = x.shape
@@ -428,16 +426,13 @@ class A2AHiFiPlusGenerator(HiFiPlusGenerator):
             band8_16 = band8_16.repeat(batch_size, 2, 1).to(upsampled_x.device)
             x_res = self.nw_stack2(upsampled_x, padded_reference, band8_16)
 
-
         x_res = self.get_stft(x_res, sampling_rate=target_sr)
         x_res = torch.abs(x_res)
-
         if self.use_spectralunet:
             x_res = self.apply_spectralunet(x_res)
         else:
-
             x_res = self.conv(x_res)
-        x_res = self.hifi(x_res)
+        x_res, outs = self.hifi(x_res)
         
         if self.use_waveunet:
             x_res = self.apply_waveunet_a2a(x_res, padded_reference)
@@ -445,7 +440,7 @@ class A2AHiFiPlusGenerator(HiFiPlusGenerator):
         x_res = self.conv_post(x_res)
         x_res = torch.tanh(x_res)
 
-        return x_res[..., :target_size]
+        return x_res[..., :target_size], outs
     
 
 class A2AHiFiPlusGeneratorWithMRF(HiFiPlusGenerator):
@@ -716,8 +711,10 @@ class A2AHiFiPlusPlus(HiFiPlusGenerator):
         x = self.melspec_creator(x_orig).squeeze(1)
         x = self.apply_spectralunet(x)
         x = self.hifi(x)
+        print('AAAA', x.shape)
         if self.use_waveunet:
             x = self.apply_waveunet_a2a(x, x_orig)
         x = self.conv_post(x)
         x = torch.tanh(x)
+        print('AAAA', x.shape)
         return x

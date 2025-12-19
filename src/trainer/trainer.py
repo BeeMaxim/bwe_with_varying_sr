@@ -44,25 +44,29 @@ class Trainer(BaseTrainer):
         if isinstance(self.model, HiFiGANWithMRF):
             wav_fake = self.model.generator(initial_wav, initial_sr, target_sr)
         else:
-            wav_fake = self.model.generator(initial_wav, initial_sr, target_sr, **batch)
+            wav_fake, outs = self.model.generator(initial_wav, initial_sr, target_sr, **batch)
         
         if target_wav.shape != wav_fake.shape:
             wav_fake = torch.stack([F.pad(wav, (0, target_wav.shape[2] - wav_fake.shape[2]), value=0) for wav in wav_fake])
+        
         batch["generated_wav"] = wav_fake
+        batch["generator_outs"] = outs
+
         if self.is_train:
             self.disc_optimizer.zero_grad()
 
         for disc_name, disc in self.model.discriminators.items():
-            gt_out, _, fake_out, _ = disc(target_wav, wav_fake.detach(), **batch)
+            detached_outs = [x.detach() for x in outs]
+            gt_out, _, fake_out, _ = disc(target_wav, wav_fake.detach(), generator_outs=detached_outs)
             batch[f"{disc_name}_gt_out"] = gt_out
             batch[f"{disc_name}_fake_out"] = fake_out
 
         disc_losses, disc_loss = self.criterion.discriminator_loss(batch)
 
         if self.is_train:
-            for _, disc in self.model.discriminators.items():
-                self._clip_grad_norm(disc)
             disc_loss.backward()
+            for _, disc in self.model.discriminators.items():
+                self._clip_grad_norm(disc)     
             self.disc_optimizer.step()
             self.gen_optimizer.zero_grad()
 
@@ -79,8 +83,8 @@ class Trainer(BaseTrainer):
         adv_gen_losses, feats_gen_losses, mel_spec_loss, gen_loss = self.criterion.generator_loss(batch)
 
         if self.is_train:
-            self._clip_grad_norm(self.model.generator)
             gen_loss.backward()
+            self._clip_grad_norm(self.model.generator)      
             self.gen_optimizer.step()
 
         batch["disc_loss"] = disc_loss
@@ -90,7 +94,7 @@ class Trainer(BaseTrainer):
         batch.update(disc_losses)
         batch["mel_spec_loss"] = mel_spec_loss
         batch["gen_loss"] = gen_loss
-    
+
         for loss_name in self.config.writer.loss_names:
             metrics.update(loss_name, batch[loss_name].item())
 

@@ -65,28 +65,45 @@ class CoMBDBlock(torch.nn.Module):
 
 
 class CoMBD(torch.nn.Module):
-    def __init__(self, h, pqmf_list=None, use_spectral_norm=False):
+    def __init__(self, 
+                 h_u: List[int],
+                 d_k: List[int],
+                 d_s: List[int],
+                 d_d: List[int],
+                 d_g: List[int],
+                 d_p: List[int],
+                 op_f: int,
+                 op_k: int,
+                 op_g: int, 
+                 pqmf_config,
+                 pqmf_list=None, use_spectral_norm=False):
         super(CoMBD, self).__init__()
-        self.h = h
+
         if pqmf_list is not None:
             self.pqmf = pqmf_list
         else:
             self.pqmf = [
-                PQMF(*h.pqmf_config["lv2"]),
-                PQMF(*h.pqmf_config["lv1"])
+                PQMF(*pqmf_config["lv2"]),
+                PQMF(*pqmf_config["lv1"])
             ]
+            self.pqmf_2 = nn.ModuleList([
+                PQMF(*pqmf_config["lv2"]),
+                PQMF(*pqmf_config["lv1"])
+            ])
+            for param in self.pqmf_2.parameters():
+                param.requires_grad = False
 
         self.blocks = nn.ModuleList()
         for _h_u, _d_k, _d_s, _d_d, _d_g, _d_p, _op_f, _op_k, _op_g in zip(
-            h.combd_h_u,
-            h.combd_d_k,
-            h.combd_d_s,
-            h.combd_d_d,
-            h.combd_d_g,
-            h.combd_d_p,
-            h.combd_op_f,
-            h.combd_op_k,
-            h.combd_op_g,
+            h_u,
+            d_k,
+            d_s,
+            d_d,
+            d_g,
+            d_p,
+            op_f,
+            op_k,
+            op_g,
         ):
             self.blocks.append(CoMBDBlock(
                 _h_u,
@@ -141,7 +158,19 @@ class CoMBD(torch.nn.Module):
 
         return outs_real, outs_fake, f_maps_real, f_maps_fake
 
-    def forward(self, x_gt, x_fake):
+    def forward(self, x_gt, x_fake, generator_outs, **batch):
+        padded_size = generator_outs[-1].size(-1) * 2 - x_gt.size(-1)
+
+        ys = [
+            self.pqmf_2[0].analysis(
+                F.pad(x_gt, (0, padded_size))
+            )[:, :1],
+            self.pqmf_2[1].analysis(
+                F.pad(x_gt, (0, padded_size))
+            )[:, :1],
+            x_gt
+        ]
         outs_real, outs_fake, f_maps_real, f_maps_fake = self._pqmf_forward(
-            x_gt, x_fake)
-        return outs_real, outs_fake, f_maps_real, f_maps_fake
+            ys, generator_outs + [x_fake])
+
+        return outs_real, f_maps_real, outs_fake, f_maps_fake

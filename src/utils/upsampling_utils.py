@@ -752,6 +752,8 @@ class HiFiUpsampling(torch.nn.Module):
                 )
             )
 
+        projection_kernels = [5, 7]
+        self.conv_posts = nn.ModuleList()
         ch = None
         self.resblocks = nn.ModuleList()
         for i in range(len(self.ups)):
@@ -762,10 +764,21 @@ class HiFiUpsampling(torch.nn.Module):
                 self.resblocks.append(
                     resblock(ch, k, d, norm_type=self.norm_type)
                 )
+
+            if 1 <= i < 3:
+                self.conv_posts.append(
+                    weight_norm(
+                        Conv1d(
+                            ch, 1,
+                            projection_kernels[i - 1], 1, projection_kernels[i - 1] // 2
+                        )
+                    )
+                )
         self.ups.apply(init_weights)
         return ch
 
     def forward(self, x):
+        outs = []
         x = self.conv_pre(x)
         for i in range(self.num_upsamples):
             x = F.leaky_relu(x, LRELU_SLOPE)
@@ -777,10 +790,15 @@ class HiFiUpsampling(torch.nn.Module):
                 else:
                     xs += self.resblocks[i * self.num_kernels + j](x)
             x = xs / self.num_kernels
+
+            if self.num_upsamples - 3 <= i < self.num_upsamples - 1:
+                _x = F.leaky_relu(x)
+                _x = self.conv_posts[i - 1](_x)
+                _x = torch.tanh(_x)
+                outs.append(_x)
+
         x = F.leaky_relu(x)
-        return x
-
-
+        return x, outs
 
 
 class SpectralUNet(nn.Module):

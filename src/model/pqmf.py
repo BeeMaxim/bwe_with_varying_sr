@@ -11,8 +11,7 @@ Copied from https://github.com/kan-bayashi/ParallelWaveGAN/blob/master/parallel_
 import numpy as np
 import torch
 import torch.nn.functional as F
-
-#from scipy.signal import kaiser
+from scipy.signal.windows import kaiser
 
 
 def design_prototype_filter(taps=62, cutoff_ratio=0.142, beta=9.0):

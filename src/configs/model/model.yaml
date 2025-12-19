@@ -32,5 +32,5 @@ generator_config:
 
 defaults:
   - _self_
-  - discriminators@discriminators.msd: MSD
-  - discriminators@discriminators.mpd: MPD
+  - discriminators@discriminators.combd: CoMBD
+  - discriminators@discriminators.mpd: SBD

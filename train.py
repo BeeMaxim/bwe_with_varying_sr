@@ -26,6 +26,13 @@ def main(config):
 
     project_config = OmegaConf.to_container(config)
     logger = setup_saving_and_logging(config)
+    if config.writer.ignore_and_log_all:
+        config.writer.loss_names = ["gen_loss", "disc_loss", "mel_spec_loss"]
+        for disc_name in config.model.discriminators.keys():
+            config.writer.loss_names.append(f"{disc_name}_gen_loss")
+            config.writer.loss_names.append(f"{disc_name}_feats_gen_loss")
+            config.writer.loss_names.append(f"{disc_name}_disc_loss")
+
     writer = instantiate(config.writer, logger, project_config)
 
     if config.trainer.device == "auto":
