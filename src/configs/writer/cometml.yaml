@@ -5,5 +5,5 @@ run_name: "testing"
 mode: "online"
 loss_names: ["gen_loss", "disc_loss", "mpd_gen_loss", "combd_gen_loss", "mel_spec_loss", "mpd_feats_gen_loss", "combd_feats_gen_loss", "mpd_disc_loss", "msd_disc_loss"]
 ignore_and_log_all: True # log all keys that ends with 'loss'
-log_checkpoints: False # set to True if you want to log save_dir with checkpoints to W&B
+log_checkpoints: True # set to True if you want to log save_dir with checkpoints to W&B
 id_length: 32 # length of the run_id

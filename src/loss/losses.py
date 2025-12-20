@@ -88,7 +88,7 @@ class HiFiGANLoss(nn.Module):
                 feats_gen_loss = self.fm_loss(batch[f"{disc_name}_gt_feats"], batch[f"{disc_name}_fake_feats"])
                 adv_losses[f"{disc_name}_gen_loss"] = adv_gen_loss
                 feats_losses[f"{disc_name}_feats_gen_loss"] = feats_gen_loss
-                total_loss = total_loss + 2 * adv_gen_loss + feats_gen_loss
+                total_loss = total_loss + adv_gen_loss + 2 * feats_gen_loss
 
         # TODO computation of mel specs here with given melSpecComputer as an argument
         # for better generalization to other spectral losses
