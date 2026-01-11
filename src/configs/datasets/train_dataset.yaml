@@ -19,4 +19,4 @@ val:
   segment_size: 8192
   device: ${trainer.device}
   split: False
-  mode: 'train'
+  mode: 'test'

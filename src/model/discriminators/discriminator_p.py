@@ -56,4 +56,5 @@ class MultiPeriodDiscriminator(nn.Module):
             disc_outputs_fake.append(output_fake)
             disc_features_gt.append(features_list_gt)
             disc_features_fake.append(features_list_fake)
+            
         return disc_outputs_gt, disc_features_gt, disc_outputs_fake, disc_features_fake

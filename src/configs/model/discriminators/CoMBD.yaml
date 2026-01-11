@@ -1,4 +1,4 @@
-_target_: src.model.CoMBD
+_target_: src.model.discriminators.CoMBD
 h_u : [
   [16, 64, 256, 1024, 1024, 1024],
   [16, 64, 256, 1024, 1024, 1024],

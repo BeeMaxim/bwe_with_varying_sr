@@ -1,4 +1,4 @@
-_target_: src.model.MultiScaleDiscriminator
+_target_: src.model.discriminators.MultiScaleDiscriminator
 num_blocks: 3
 kernel_sizes: [15, 41, 41, 41, 41, 41, 5]
 strides: [1, 2, 2, 4, 4, 1, 1]

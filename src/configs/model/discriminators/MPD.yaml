@@ -1,4 +1,4 @@
-  _target_: src.model.MultiPeriodDiscriminator
+  _target_: src.model.discriminators.MultiPeriodDiscriminator
   periods: [2, 3, 5, 7, 11]
   kernel_size: 5
   stride: 3

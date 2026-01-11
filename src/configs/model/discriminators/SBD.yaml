@@ -1,4 +1,4 @@
-_target_: src.model.SBD
+_target_: src.model.discriminators.SBD
 filters: [[64, 128, 256, 256, 256],[64, 128, 256, 256, 256],[64, 128, 256, 256, 256],[32, 64, 128, 128, 128]]
 strides: [[1, 1, 3, 3, 1], [1, 1, 3, 3, 1], [1, 1, 3, 3, 1], [1, 1, 3, 3, 1]]
 kernel_sizes: [

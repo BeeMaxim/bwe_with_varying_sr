@@ -1,7 +1,7 @@
 import torch.nn as nn
 from src.model.generator import A2AHiFiPlusPlus
-from src.model.discriminator_p import MultiPeriodDiscriminator
-from src.model.discriminator_s import MultiScaleDiscriminator
+from src.model.discriminators.discriminator_p import MultiPeriodDiscriminator
+from src.model.discriminators.discriminator_s import MultiScaleDiscriminator
 
 
 class HiFiPlusPlusGAN(nn.Module):
