@@ -1,12 +1,10 @@
-from typing import List
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import Conv1d
 from torch.nn.utils import weight_norm
 from torch.nn.utils import spectral_norm
-from typing import List
+import random
 
 from src.model.pqmf import PQMF
 from src.utils.upsampling_utils import get_padding
@@ -125,6 +123,7 @@ class SBD(torch.nn.Module):
         super(SBD, self).__init__()
         self.band_ranges = band_ranges
         self.transpose = transpose
+        self.segment_size = segment_size * 4
         self.pqmf = PQMF(
             *pqmf_params
         )
@@ -164,6 +163,15 @@ class SBD(torch.nn.Module):
         y_d_gs = []
         fmap_rs = []
         fmap_gs = []
+        max_audio_start = min(x_gt.size(-1), x_fake.size(-1)) - self.segment_size
+        if max_audio_start <= 0:
+            x_gt = torch.nn.functional.pad(x_gt, (0, self.segment_size - x_gt.size(2)),"constant",)
+            x_fake = torch.nn.functional.pad(x_fake, (0, self.segment_size - x_fake.size(2)),"constant",)
+        else:
+            audio_start = random.randint(0, max_audio_start)
+            x_gt = x_gt[..., audio_start : audio_start + self.segment_size]
+            x_fake = x_fake[..., audio_start : audio_start + self.segment_size]
+
         y_in = self.pqmf.analysis(x_gt)
         y_hat_in = self.pqmf.analysis(x_fake)
         if self.f_pqmf is not None:
