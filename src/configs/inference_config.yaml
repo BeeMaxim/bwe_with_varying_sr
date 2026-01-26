@@ -9,4 +9,4 @@ inferencer:
   device: auto
   save_path: "inference_dir"
   seed: 1
-  from_pretrained: null
+  from_pretrained: D:\hifi_ssr\bwe_with_varying_sr\checkpoints\checkpoint-epoch40-20000_nodiscs.pth

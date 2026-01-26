@@ -126,6 +126,8 @@ class DiscriminatorSTFT(nn.Module):
         z = self.spec_transform(x)  # [B, 2, Freq, Frames, 2]
         z = torch.cat([z.real, z.imag], dim=1)
         z = rearrange(z, 'b c w t -> b c t w')
+        hr = z.size(-1) // 4
+        z = z[..., hr:] # only high freq
         for i, layer in enumerate(self.convs):
             z = layer(z)
             z = self.activation(z)

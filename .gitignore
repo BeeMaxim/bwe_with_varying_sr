@@ -104,6 +104,8 @@ ENV/
 data/
 input/
 saved_dir/
+checkpoints/
+demos/
 wandb/
 .cometml-runs/
 outputs/

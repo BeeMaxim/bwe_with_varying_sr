@@ -119,9 +119,8 @@ class Inferencer(BaseTrainer):
         initial_wav = batch['wav_lr']
         initial_sr = self.config.datasets.test.initial_sr
         target_sr = self.config.datasets.test.target_sr
-        generated_wavs = self.model.generator(initial_wav, initial_sr, target_sr, **batch)
+        generated_wavs = self.model.generator(initial_wav, initial_sr, target_sr, **batch)[0]
         batch['generated_wav'] = generated_wavs
-
 
         if metrics is not None:
             calculate_all_metrics(batch['generated_wav'], batch['wav_hr'], self.metrics["inference"], self.config.datasets.test.initial_sr, self.config.datasets.test.target_sr)
