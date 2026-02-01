@@ -111,11 +111,13 @@ class VCTKDataset(BaseDataset):
 
         input_audio_lr = torch.FloatTensor(input_audio_lr)
         input_audio_hr = torch.FloatTensor(input_audio_hr)
+        orig_lr = torch.FloatTensor(vctk_audio_lr[None])
         melspec_lr = self.mel_creator_lr(input_audio_lr.detach()).squeeze(0)
         melspec_hr = self.mel_creator_hr(input_audio_hr.detach()).squeeze(0)
 
         return {"wav_lr": input_audio_lr, 'wav_hr': input_audio_hr, 'path_lr' : vctk_fn_lr, 'path_hr':vctk_fn_hr, \
-                 'melspec_lr' : melspec_lr, 'melspec_hr' : melspec_hr, 'mode':self.mode, 'reference_wav':reference_wav}
+                 'melspec_lr' : melspec_lr, 'melspec_hr' : melspec_hr, 'mode':self.mode, 'reference_wav':reference_wav, 
+                 'orig_lr': orig_lr}
 
     def __len__(self):
         return len(self.audio_files_lr)

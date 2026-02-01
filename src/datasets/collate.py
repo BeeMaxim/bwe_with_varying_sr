@@ -20,6 +20,7 @@ def collate_fn(dataset_items: list[dict]):
     all_wavs_hr = []
     all_melspecs_lr = []
     all_melspecs_hr = []
+    all_orig_lr = []
     max_len_wav_lr = 0
     max_len_wav_hr = 0
     max_len_spec_lr = 0
@@ -43,6 +44,7 @@ def collate_fn(dataset_items: list[dict]):
         paths_hr.append(item['path_hr'])
         all_wavs_lr.append(item['wav_lr'].squeeze(0))
         all_wavs_hr.append(item['wav_hr'].squeeze(0))
+        all_orig_lr.append(item['orig_lr'].squeeze(0))
         all_melspecs_lr.append(item['melspec_lr'])
         all_melspecs_hr.append(item['melspec_hr'])
         max_len_wav_lr = max(len(item['wav_lr'].squeeze(0)), max_len_wav_lr)
@@ -60,10 +62,12 @@ def collate_fn(dataset_items: list[dict]):
     result_batch['initial_len_melspec_hr'] = initial_len_melspec_hr
     padded_wavs_lr = torch.stack([F.pad(wav, (0, max_len_wav_lr - wav.shape[0]), value=0) for wav in all_wavs_lr])    
     padded_wavs_hr = torch.stack([F.pad(wav, (0, max_len_wav_hr - wav.shape[0]), value=0) for wav in all_wavs_hr])
+    padded_orig_lr = torch.stack([F.pad(wav, (0, max_len_wav_lr - wav.shape[0]), value=0) for wav in all_orig_lr])
     padded_specs_lr = torch.stack([F.pad(spec, (0, max_len_spec_lr - spec.shape[-1], 0, 0)) for spec in all_melspecs_lr])
     padded_specs_hr = torch.stack([F.pad(spec, (0, max_len_spec_hr - spec.shape[-1], 0, 0)) for spec in all_melspecs_hr])
     result_batch['wav_lr'] = padded_wavs_lr.unsqueeze(1)
     result_batch['wav_hr'] = padded_wavs_hr.unsqueeze(1)
+    result_batch['orig_lr'] = padded_orig_lr.unsqueeze(1)
     result_batch['melspec_lr'] = padded_specs_lr
     result_batch['melspec_hr'] = padded_specs_hr
     result_batch['paths_lr'] = paths_lr
