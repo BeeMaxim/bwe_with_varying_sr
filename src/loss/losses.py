@@ -1,6 +1,7 @@
 import torch 
 import torch.nn as nn
 import torch.nn.functional as F
+from src.loss.msstft_loss import MultiResolutionSTFTLoss
 
 
 class DiscriminatorLoss(nn.Module):
@@ -61,7 +62,8 @@ class HiFiGANLoss(nn.Module):
         super().__init__()
         self.disc_loss = DiscriminatorLoss()
         self.gen_loss = GeneratorLoss()
-        self.melspec_loss = MelSpectrogramLoss()
+        # self.melspec_loss = MelSpectrogramLoss()
+        self.msstft_loss = MultiResolutionSTFTLoss()
         self.fm_loss = FeatureMatchingLoss()
               
     def discriminator_loss(self, batch):
@@ -92,7 +94,7 @@ class HiFiGANLoss(nn.Module):
 
         # TODO computation of mel specs here with given melSpecComputer as an argument
         # for better generalization to other spectral losses
-        mel_spec_loss = self.melspec_loss(batch["mel_spec_hr"], batch["mel_spec_fake"])
-        total_loss = total_loss + 45 * mel_spec_loss
+        spec_loss = self.msstft_loss(batch["generated_wav"].squeeze(1), batch["wav_hr"].squeeze(1))
+        total_loss = total_loss + 45 * spec_loss
         
-        return adv_losses, feats_losses, mel_spec_loss, total_loss
+        return adv_losses, feats_losses, spec_loss, total_loss
