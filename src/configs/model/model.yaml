@@ -17,7 +17,7 @@ generator_config:
   nwstack1_blocks: 1
   nwstack2_blocks: 1
 
-  use_spectralunet: True
+  use_spectralunet: False
   spectralunet_block_widths: [8, 16, 24, 32, 64]
   spectralunet_block_depth: 5
   spectralunet_positional_encoding: True
@@ -33,4 +33,4 @@ generator_config:
 defaults:
   - _self_
   - discriminators@discriminators.msstft: MSSTFT
- # - discriminators@discriminators.mpd: CoMBD
+ # - discriminators@discriminators.sbd: SBD

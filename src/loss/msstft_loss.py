@@ -24,7 +24,7 @@ def stft(x, fft_size, hop_size, win_length, window):
     imag = x_stft[..., 1]
 
     # NOTE(kan-bayashi): clamp is needed to avoid nan or inf
-    return torch.sqrt(torch.clamp(real ** 2 + imag ** 2, min=1e-7)).transpose(2, 1)
+    return torch.sqrt(torch.clamp(real ** 2 + imag ** 2, min=1e-7)).transpose(2, 1), real, imag
 
 
 class SpectralConvergengeLoss(torch.nn.Module):
@@ -43,6 +43,24 @@ class SpectralConvergengeLoss(torch.nn.Module):
             Tensor: Spectral convergence loss value.
         """
         return torch.norm(y_mag - x_mag, p="fro") / torch.norm(y_mag, p="fro")
+    
+
+class SpectralComplexLoss(torch.nn.Module):
+    """Spectral convergence loss module."""
+
+    def __init__(self):
+        """Initilize spectral convergence loss module."""
+        super(SpectralComplexLoss, self).__init__()
+
+    def forward(self, x_real, y_real, x_imag, y_imag):
+        """Calculate forward propagation.
+        Args:
+            x_mag (Tensor): Magnitude spectrogram of predicted signal (B, #frames, #freq_bins).
+            y_mag (Tensor): Magnitude spectrogram of groundtruth signal (B, #frames, #freq_bins).
+        Returns:
+            Tensor: Spectral complex loss value.
+        """
+        return F.mse_loss(torch.stack([x_real, x_imag], dim=-1), torch.stack([y_real, y_imag], dim=-1))
 
 
 class LogSTFTMagnitudeLoss(torch.nn.Module):
@@ -75,6 +93,7 @@ class STFTLoss(torch.nn.Module):
         self.register_buffer("window", getattr(torch, window)(win_length))
         self.spectral_convergenge_loss = SpectralConvergengeLoss()
         self.log_stft_magnitude_loss = LogSTFTMagnitudeLoss()
+        self.spectral_complex_loss = SpectralComplexLoss()
 
     def forward(self, x, y):
         """Calculate forward propagation.
@@ -85,9 +104,9 @@ class STFTLoss(torch.nn.Module):
             Tensor: Spectral convergence loss value.
             Tensor: Log STFT magnitude loss value.
         """
-        x_mag = stft(x, self.fft_size, self.shift_size, self.win_length, self.window)
-        y_mag = stft(y, self.fft_size, self.shift_size, self.win_length, self.window)
-        sc_loss = self.spectral_convergenge_loss(x_mag, y_mag)
+        x_mag, x_real, x_imag = stft(x, self.fft_size, self.shift_size, self.win_length, self.window)
+        y_mag, y_real, y_imag = stft(y, self.fft_size, self.shift_size, self.win_length, self.window)
+        sc_loss = self.spectral_complex_loss(x_real, y_real, x_imag, y_imag)
         mag_loss = self.log_stft_magnitude_loss(x_mag, y_mag)
 
         return sc_loss, mag_loss
@@ -135,4 +154,4 @@ class MultiResolutionSTFTLoss(torch.nn.Module):
         sc_loss /= len(self.stft_losses)
         mag_loss /= len(self.stft_losses)
 
-        return mag_loss
+        return mag_loss + sc_loss
