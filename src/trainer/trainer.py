@@ -103,7 +103,7 @@ class Trainer(BaseTrainer):
 
         return batch
 
-    def _log_batch(self, batch_idx, batch, mode="train"):
+    def _log_batch(self, batch, mode="train"):
         """
         Log data from batch. Calls self.writer.add_* to log data
         to the experiment tracker.
@@ -116,32 +116,32 @@ class Trainer(BaseTrainer):
                 rules to apply.
         """
         if mode == "train": 
-            self.log_spectrogram(partition='train',**batch)
+            self.log_spectrogram(partition='train', **batch)
             self.log_audio(partition='train', **batch)
 
         else:
             self.log_spectrogram(partition='val', **batch)
-            self.log_audio(partition='val',**batch)
+            self.log_audio(partition='val', **batch)
 
 
-    def log_audio(self, wav_lr, wav_hr,  generated_wav, partition, **batch):
+    def log_audio(self, wav_lr, wav_hr, generated_wav, partition, batch_idx, **batch):
         actual_batch_size = min(self.config.dataloader.val.batch_size, len(wav_lr))
         for i in range(actual_batch_size):
-            self.writer.add_audio(f"initial_wav_lr_{i}", wav_lr[i][:, :batch['initial_len_lr'][i]], self.config.datasets.val.initial_sr)
-            self.writer.add_audio(f"initial_wav_hr_{i}", wav_hr[i][:, :batch['initial_len_hr'][i]], self.config.datasets.val.target_sr)
-            self.writer.add_audio(f"generated_wav_{i}", generated_wav[i][:, :batch['initial_len_hr'][i]], self.config.datasets.val.target_sr)
+            self.writer.add_audio(f"initial_wav_lr_{batch_idx}_{i}", wav_lr[i][:, :batch['initial_len_lr'][i]], self.config.datasets.val.initial_sr)
+            self.writer.add_audio(f"initial_wav_hr_{batch_idx}_{i}", wav_hr[i][:, :batch['initial_len_hr'][i]], self.config.datasets.val.target_sr)
+            self.writer.add_audio(f"generated_wav_{batch_idx}_{i}", generated_wav[i][:, :batch['initial_len_hr'][i]], self.config.datasets.val.target_sr)
 
 
-    def log_spectrogram(self, melspec_lr, melspec_hr,  mel_spec_fake, partition, **batch):
+    def log_spectrogram(self, melspec_lr, melspec_hr,  mel_spec_fake, partition, batch_idx, **batch):
         actual_batch_size = min(self.config.dataloader.val.batch_size, len(melspec_lr))
         for i in range(actual_batch_size):
             spectrogram_for_plot_real_lr = melspec_lr[i].detach().cpu()[:, :batch['initial_len_melspec_lr'][i]]
             spectrogram_for_plot_real_hr = melspec_hr[i].detach().cpu()[:, :batch['initial_len_melspec_hr'][i]]
             spectrogram_for_plot_fake = mel_spec_fake[i].detach().cpu()[:, :batch['initial_len_melspec_hr'][i]]
             image = plot_spectrogram(spectrogram_for_plot_real_lr)
-            self.writer.add_image(f"melspectrogram_real_lr_{i}", image)
+            self.writer.add_image(f"melspectrogram_real_lr_{batch_idx}_{i}", image)
             image_hr = plot_spectrogram(spectrogram_for_plot_real_hr)
-            self.writer.add_image(f"melspectrogram_real_hr_{i}", image_hr)
+            self.writer.add_image(f"melspectrogram_real_hr_{batch_idx}_{i}", image_hr)
             image_fake = plot_spectrogram(spectrogram_for_plot_fake)
-            self.writer.add_image(f"melspectrogram_fake_{i}", image_fake)
+            self.writer.add_image(f"melspectrogram_fake_{batch_idx}_{i}", image_fake)
         

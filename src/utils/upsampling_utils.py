@@ -2,7 +2,7 @@ from typing import Literal
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn.utils import  spectral_norm #, weight_norm
+from torch.nn.utils import spectral_norm #, weight_norm
 from torch.nn.utils.parametrizations import weight_norm
 from typing import Literal
 from math import sqrt
@@ -11,6 +11,8 @@ import numpy as np
 from torch import sin, pow
 from torch.nn import Parameter
 import math
+from pathlib import Path
+import torchaudio
 
 
 
@@ -579,12 +581,12 @@ def build_block(
             *[
                 AddSkipConn(
                     nn.Sequential(
-                        # nn.LeakyReLU(),
-                        TorchActivation1d(
-                            activation=SnakeBeta(
-                                inner_width, alpha_logscale=True
-                            )
-                        ),
+                        nn.LeakyReLU(),
+                        #TorchActivation1d(
+                        #    activation=SnakeBeta(
+                        #        inner_width, alpha_logscale=True
+                        #    )
+                        #),
                         norm(
                             nn.Conv2d(
                                 inner_width,
@@ -604,9 +606,9 @@ def build_block(
             *[
                 AddSkipConn(
                     nn.Sequential(
-                        # nn.LeakyReLU(),
+                        #nn.LeakyReLU(),
                         TorchActivation1d(
-                            activation=SnakeBeta(
+                           activation=SnakeBeta(
                                 inner_width, alpha_logscale=True
                             )
                         ),
@@ -1019,8 +1021,10 @@ class NUWaveBlock(nn.Module):
         gate, filter = torch.cat((gate_l, gate_g), dim=1), torch.cat((filter_l, filter_g), dim=1)
         y = torch.sigmoid(gate) * torch.tanh(filter)
         y = self.output_projection(y)
+
         residual, skip = torch.chunk(y, 2, dim=1)
         out = self.output_projection2(residual)
+
         return out
     
     
@@ -1182,6 +1186,7 @@ class HiFiUpsampling(torch.nn.Module):
     def forward(self, x, **batch):
         outs = []
         x = self.conv_pre(x)
+
         for i in range(self.num_upsamples):
             x = F.leaky_relu(x, LRELU_SLOPE)
             x = self.ups[i](x)
@@ -1193,7 +1198,7 @@ class HiFiUpsampling(torch.nn.Module):
                 else:
                     xs += self.resblocks[i * self.num_kernels + j](x)
             x = xs / self.num_kernels
-          
+    
             if self.num_upsamples - 3 <= i < self.num_upsamples - 1:
                 _x = F.leaky_relu(x)
                 _x = self.conv_posts[i - 1](_x)
@@ -1330,3 +1335,81 @@ class SpectralUNetForHiFi(nn.Module):
         out = self.post_conv_2d(out).squeeze(1)
         out = self.post_conv_1d(out)
         return out
+
+
+class SpectralMaskNet(nn.Module):
+    def __init__(
+        self,
+        in_ch=8,
+        act="softplus",
+        block_widths=(8, 12, 24, 32),
+        block_depth=4,
+        norm_type: Literal["weight", "spectral", "id"] = "weight"
+    ):
+        super().__init__()
+        self.net = MultiScaleResnet2d(
+            block_widths,
+            block_depth,
+            scale_factor=2,
+            in_width=in_ch,
+            out_width=in_ch,
+            norm_type=norm_type
+        )
+        if act == "softplus":
+            self.act = nn.Softplus()
+        else:
+            self.act = nn.ReLU()
+
+    def forward(self, x):
+        n_fft = 1024
+        win_length = n_fft
+        hop_length = n_fft // 4
+        f_hat = torch.stft(
+            x.reshape(x.shape[0] * x.shape[1], -1), # view
+            n_fft=n_fft,
+            center=True,
+            hop_length=hop_length,
+            window=torch.hann_window(
+                window_length=win_length, device=x.device
+            ),
+            return_complex=False,
+        )
+
+        f = (f_hat[:, 1:, 1:].pow(2).sum(-1) + 1e-9).sqrt()
+
+        padding = (
+            int(math.ceil(f.shape[-1] / 8.0)) * 8 - f.shape[-1]
+        )  # (2**(int(math.ceil(math.log2(f.shape[-1])))) - f.shape[-1]) // 2
+        padding_right = padding // 2
+        padding_left = padding - padding_right
+        f = torch.nn.functional.pad(f, (padding_left, padding_right))
+
+        mult_factor = self.act(
+            self.net(f.view(x.shape[0], -1, f.shape[1], f.shape[2]))
+        )  # [..., padding_left:-padding_right]
+        if padding_right != 0:
+            mult_factor = mult_factor[..., padding_left:-padding_right]
+        else:
+            mult_factor = mult_factor[..., padding_left:]
+
+        mult_factor = mult_factor.reshape(
+            (
+                mult_factor.shape[0] * mult_factor.shape[1],
+                mult_factor.shape[2],
+                mult_factor.shape[3],
+            )
+        )[..., None]
+
+        one_padded_mult_factor = torch.ones_like(f_hat)
+        one_padded_mult_factor[:, 1:, 1:] *= mult_factor
+
+        f_hat = torch.view_as_complex(f_hat * one_padded_mult_factor)
+        y = torch.istft(
+            f_hat,
+            n_fft=n_fft,
+            hop_length=hop_length,
+            window=torch.hann_window(
+                window_length=win_length, device=x.device
+            ),
+        )
+        return y.view(x.shape[0], x.shape[1], -1)
