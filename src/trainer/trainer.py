@@ -8,8 +8,6 @@ from src.metrics.tracker import MetricTracker
 from src.trainer.base_trainer import BaseTrainer
 import torch.nn.functional as F
 from src.metrics.calculate_metrics import calculate_all_metrics
-from src.model import HiFiGANWithMRF
-
 
 
 class Trainer(BaseTrainer):
@@ -41,10 +39,8 @@ class Trainer(BaseTrainer):
         target_wav = batch['wav_hr']
         initial_sr = self.config.datasets.train.initial_sr
         target_sr = self.config.datasets.train.target_sr
-        if isinstance(self.model, HiFiGANWithMRF):
-            wav_fake = self.model.generator(initial_wav, initial_sr, target_sr)
-        else:
-            wav_fake, outs = self.model.generator(initial_wav, initial_sr, target_sr, **batch)
+
+        wav_fake, outs = self.model.generator(initial_wav, initial_sr, target_sr, **batch)
         
         if target_wav.shape != wav_fake.shape:
             wav_fake = torch.stack([F.pad(wav, (0, target_wav.shape[2] - wav_fake.shape[2]), value=0) for wav in wav_fake])
@@ -103,7 +99,7 @@ class Trainer(BaseTrainer):
 
         return batch
 
-    def _log_batch(self, batch, mode="train"):
+    def _log_batch(self, batch_idx, batch, mode="train"):
         """
         Log data from batch. Calls self.writer.add_* to log data
         to the experiment tracker.
@@ -116,15 +112,15 @@ class Trainer(BaseTrainer):
                 rules to apply.
         """
         if mode == "train": 
-            self.log_spectrogram(partition='train', **batch)
-            self.log_audio(partition='train', **batch)
+            self.log_spectrogram(batch_idx, partition='train', **batch)
+            self.log_audio(batch_idx, partition='train', **batch)
 
         else:
-            self.log_spectrogram(partition='val', **batch)
-            self.log_audio(partition='val', **batch)
+            self.log_spectrogram(batch_idx, partition='val', **batch)
+            self.log_audio(batch_idx, partition='val', **batch)
 
 
-    def log_audio(self, wav_lr, wav_hr, generated_wav, partition, batch_idx, **batch):
+    def log_audio(self, batch_idx, wav_lr, wav_hr, generated_wav, partition, **batch):
         actual_batch_size = min(self.config.dataloader.val.batch_size, len(wav_lr))
         for i in range(actual_batch_size):
             self.writer.add_audio(f"initial_wav_lr_{batch_idx}_{i}", wav_lr[i][:, :batch['initial_len_lr'][i]], self.config.datasets.val.initial_sr)
@@ -132,7 +128,7 @@ class Trainer(BaseTrainer):
             self.writer.add_audio(f"generated_wav_{batch_idx}_{i}", generated_wav[i][:, :batch['initial_len_hr'][i]], self.config.datasets.val.target_sr)
 
 
-    def log_spectrogram(self, melspec_lr, melspec_hr,  mel_spec_fake, partition, batch_idx, **batch):
+    def log_spectrogram(self, batch_idx, melspec_lr, melspec_hr,  mel_spec_fake, partition, **batch):
         actual_batch_size = min(self.config.dataloader.val.batch_size, len(melspec_lr))
         for i in range(actual_batch_size):
             spectrogram_for_plot_real_lr = melspec_lr[i].detach().cpu()[:, :batch['initial_len_melspec_lr'][i]]

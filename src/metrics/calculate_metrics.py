@@ -268,7 +268,6 @@ class LSD_HF(Metric):
             out_sig: vector (torch.Tensor), enhanced signal [B,T]
             ref_sig: vector (torch.Tensor), reference signal(ground truth) [B,T]
         """
-
         out_sig = out_sig.squeeze().cpu()
         ref_sig = ref_sig.squeeze().cpu()
 
@@ -405,6 +404,8 @@ def calculate_all_metrics(wavs, reference_wavs, metrics, initial_sr, target_sr, 
         y = y[0, :]
         x = librosa.util.normalize(x[: min(len(x), len(y))])
         y = librosa.util.normalize(y[: min(len(x), len(y))])
+        # x = x[: min(len(x), len(y))]
+        # y = y[: min(len(x), len(y))]
         x = torch.from_numpy(x)[None, None]
         y = torch.from_numpy(y)[None, None]
         for metric in metrics:
@@ -415,5 +416,3 @@ def calculate_all_metrics(wavs, reference_wavs, metrics, initial_sr, target_sr, 
             scores[metric.name] += [np.mean(metric.result["mean"])]
     scores = {k: (np.mean(v), np.std(v)) for k, v in scores.items()}
     return scores
-
-

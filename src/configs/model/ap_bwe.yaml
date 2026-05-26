@@ -1,0 +1,6 @@
+_target_: src.model.APBWE
+n_fft: 1024
+win_size: 320
+hop_size: 80
+ConvNeXt_layers: 8
+ConvNeXt_channels: 512

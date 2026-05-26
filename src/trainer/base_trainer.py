@@ -544,4 +544,6 @@ class BaseTrainer:
         if checkpoint.get("state_dict") is not None:
             self.model.load_state_dict(checkpoint["state_dict"])
         else:
-            self.model.load_state_dict(checkpoint)
+            #self.model.load_state_dict(checkpoint)
+            self.model.generator.load_state_dict(checkpoint["generator"])
+            #self.model.generator.load_state_dict(checkpoint["models"]["generator"]["state"])

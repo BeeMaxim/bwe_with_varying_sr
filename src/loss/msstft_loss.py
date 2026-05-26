@@ -119,7 +119,7 @@ class MultiResolutionSTFTLoss(torch.nn.Module):
                  fft_sizes=[1024, 2048, 512],
                  hop_sizes=[120, 240, 50],
                  win_lengths=[600, 1200, 240],
-                 window="hann_window", factor_sc=0.1, factor_mag=0.1):
+                 window="hann_window", factor_sc=0.1, factor_mag=0.1, spectral_complex_loss=True):
         """Initialize Multi resolution STFT loss module.
         Args:
             fft_sizes (list): List of FFT sizes.
@@ -135,6 +135,7 @@ class MultiResolutionSTFTLoss(torch.nn.Module):
             self.stft_losses += [STFTLoss(fs, ss, wl, window)]
         self.factor_sc = factor_sc
         self.factor_mag = factor_mag
+        self.spectral_complex_loss = spectral_complex_loss
 
     def forward(self, x, y):
         """Calculate forward propagation.
@@ -153,5 +154,8 @@ class MultiResolutionSTFTLoss(torch.nn.Module):
             mag_loss += mag_l
         sc_loss /= len(self.stft_losses)
         mag_loss /= len(self.stft_losses)
-
-        return mag_loss + sc_loss
+        
+        if self.spectral_complex_loss:
+            return mag_loss + sc_loss
+        else:
+            return mag_loss

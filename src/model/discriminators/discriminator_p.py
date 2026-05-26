@@ -1,5 +1,7 @@
 import torch.nn as nn
 import torch.nn.functional as F
+import torchaudio
+import torch
 
 
 class SubMultiPeriodDiscriminator(nn.Module):
@@ -16,7 +18,6 @@ class SubMultiPeriodDiscriminator(nn.Module):
         self.conv1 =  nn.Sequential(norm(nn.Conv2d(in_channels=channels[-1], out_channels=1024, kernel_size=(5, 1), padding="same")), \
                                     nn.LeakyReLU(0.1))
         self.res_conv = norm(nn.Conv2d(in_channels=1024,out_channels=1,kernel_size=(3, 1),padding="same"))
-
 
     def make1d_to2d(self, x):
         if x.shape[-1] % self.period != 0:

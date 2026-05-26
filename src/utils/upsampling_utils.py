@@ -2,8 +2,8 @@ from typing import Literal
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn.utils import spectral_norm #, weight_norm
-from torch.nn.utils.parametrizations import weight_norm
+from torch.nn.utils import spectral_norm, weight_norm
+# from torch.nn.utils.parametrizations import weight_norm
 from typing import Literal
 from math import sqrt
 from librosa.filters import mel as librosa_mel_fn 
@@ -142,7 +142,6 @@ class SnakeBeta(nn.Module):
             alpha = torch.exp(alpha)
             beta = torch.exp(beta)
         x = x + (1.0 / (beta + self.no_div_by_zero)) * pow(sin(x * alpha), 2)
-
         return x
 
 
@@ -326,7 +325,8 @@ class ResBlock1(torch.nn.Module):
         channels,
         kernel_size=3,
         dilation=(1, 3, 5),
-        norm_type: Literal["weight", "spectral"] = "weight"
+        norm_type: Literal["weight", "spectral"] = "weight",
+        activation: Literal["leaky_relu", "snake"] = "leaky_relu"
     ):
         norm = dict(weight=weight_norm, spectral=spectral_norm)[norm_type]
         super(ResBlock1, self).__init__()
@@ -402,110 +402,30 @@ class ResBlock1(torch.nn.Module):
         )
         self.convs2.apply(init_weights)
 
+        self.num_layers = len(self.convs1) + len(self.convs2)
+
+        self.activations = nn.ModuleList(
+                [
+                    TorchActivation1d(
+                        activation=SnakeBeta(
+                            channels, alpha_logscale=True
+                        )
+                    ) if activation == "snake" else nn.LeakyReLU(LRELU_SLOPE)
+
+                    for _ in range(self.num_layers)
+                ]
+            )
+
     def forward(self, x):
-        for c1, c2 in zip(self.convs1, self.convs2):
-            xt = F.leaky_relu(x, LRELU_SLOPE)
+        acts1, acts2 = self.activations[::2], self.activations[1::2]
+        for c1, c2, a1, a2 in zip(self.convs1, self.convs2, acts1, acts2):
+            xt = a1(x)
             xt = c1(xt)
-            xt = F.leaky_relu(xt, LRELU_SLOPE)
+            xt = a2(xt)
             xt = c2(xt)
             x = xt + x
         return x
     
-
-
-class ResBlock1_2d(torch.nn.Module):
-    def __init__(
-        self,
-        channels,
-        kernel_size=3,
-        dilation=(1, 3, 5),
-        norm_type: Literal["weight", "spectral"] = "weight"
-    ):
-        norm = dict(weight=weight_norm, spectral=spectral_norm)[norm_type]
-        super(ResBlock1_2d, self).__init__()
-        self.convs1 = nn.ModuleList(
-            [
-                norm(
-                    nn.Conv2d(
-                        1,
-                        1,
-                        kernel_size,
-                        1,
-                        dilation=dilation[0],
-                        padding="same",
-                    )
-                ),
-                norm(
-                    nn.Conv2d(
-                        1,
-                        1,
-                        kernel_size,
-                        1,
-                        dilation=dilation[1],
-                        padding="same",
-                    )
-                ),
-                norm(
-                    nn.Conv2d(
-                        1,
-                        1,
-                        kernel_size,
-                        1,
-                        dilation=dilation[2],
-                        padding="same",
-                    )
-                ),
-            ]
-        )
-        self.convs1.apply(init_weights)
-
-        self.convs2 = nn.ModuleList(
-            [
-                norm(
-                    nn.Conv2d(
-                        1,
-                        1,
-                        kernel_size,
-                        1,
-                        dilation=1,
-                        padding="same",
-                    )
-                ),
-                norm(
-                    nn.Conv2d(
-                        1,
-                        1,
-                        kernel_size,
-                        1,
-                        dilation=1,
-                        padding="same",
-                    )
-                ),
-                norm(
-                    nn.Conv2d(
-                        1,
-                        1,
-                        kernel_size,
-                        1,
-                        dilation=1,
-                        padding="same",
-                    )
-                ),
-            ]
-        )
-        self.convs2.apply(init_weights)
-
-    def forward(self, x):
-        x = x.unsqueeze(1)
-        for c1, c2 in zip(self.convs1, self.convs2):
-            xt = F.leaky_relu(x, LRELU_SLOPE)
-            xt = c1(xt)
-            xt = F.leaky_relu(xt, LRELU_SLOPE)
-            xt = c2(xt)
-            x = xt + x
-        x = x.squeeze(1)
-        return x
-
 
 class ResBlock2(torch.nn.Module):
     def __init__(
@@ -513,7 +433,8 @@ class ResBlock2(torch.nn.Module):
         channels,
         kernel_size=3,
         dilation=(1, 3),
-        norm_type: Literal["weight", "spectral"] = "weight"
+        norm_type: Literal["weight", "spectral"] = "weight",
+        activation: Literal["leaky_relu", "snake"] = "leaky_relu"
     ):
         super(ResBlock2, self).__init__()
         norm = dict(weight=weight_norm, spectral=spectral_norm)[norm_type]
@@ -543,9 +464,23 @@ class ResBlock2(torch.nn.Module):
         )
         self.convs.apply(init_weights)
 
+        self.num_layers = len(self.convs)
+
+        self.activations = nn.ModuleList(
+                [
+                    TorchActivation1d(
+                        activation=SnakeBeta(
+                            channels, alpha_logscale=True
+                        )
+                    ) if activation == "snake" else nn.LeakyReLU(LRELU_SLOPE)
+
+                    for _ in range(self.num_layers)
+                ]
+            )
+
     def forward(self, x):
-        for c in self.convs:
-            xt = F.leaky_relu(x, LRELU_SLOPE)
+        for c, a in zip(self.convs, self.activations):
+            xt = a(x)
             xt = c(xt)
             x = xt + x
         return x
@@ -574,19 +509,19 @@ def build_block(
         inner_width,
         block_depth,
         mode: Literal["unet_k3_2d", "waveunet_k5"],
-        norm
+        norm,
+        activation: Literal["leaky_relu", "snake"] = "leaky_relu",
 ):
     if mode == "unet_k3_2d":
         return nn.Sequential(
             *[
                 AddSkipConn(
                     nn.Sequential(
-                        nn.LeakyReLU(),
-                        #TorchActivation1d(
-                        #    activation=SnakeBeta(
-                        #        inner_width, alpha_logscale=True
-                        #    )
-                        #),
+                        TorchActivation1d(
+                            activation=SnakeBeta(
+                                inner_width, alpha_logscale=True
+                            )
+                        ) if activation == "snake" else nn.LeakyReLU(LRELU_SLOPE),
                         norm(
                             nn.Conv2d(
                                 inner_width,
@@ -606,12 +541,11 @@ def build_block(
             *[
                 AddSkipConn(
                     nn.Sequential(
-                        #nn.LeakyReLU(),
                         TorchActivation1d(
                            activation=SnakeBeta(
                                 inner_width, alpha_logscale=True
                             )
-                        ),
+                        ) if activation == "snake" else nn.LeakyReLU(LRELU_SLOPE),
                         norm(
                             nn.Conv1d(
                                 inner_width,
@@ -642,7 +576,8 @@ class MultiScaleResnet(nn.Module):
         concat_skipconn=True,
         scale_factor=4,
         mode: Literal["waveunet_k5"] = "waveunet_k5",
-        norm_type: Literal["weight", "spectral", "id"] = "id"
+        norm_type: Literal["weight", "spectral", "id"] = "id",
+        activation: Literal["leaky_relu", "snake"] = "leaky_relu"
     ):
         super().__init__()
         norm = dict(
@@ -650,7 +585,7 @@ class MultiScaleResnet(nn.Module):
         )[norm_type]
         self.in_width = in_width
         self.out_dims = out_width
-        net = build_block(block_widths[-1], block_depth, mode, norm)
+        net = build_block(block_widths[-1], block_depth, mode, norm, activation=activation)
         for i in range(len(block_widths) - 1):
             width = block_widths[-2 - i]
             inner_width = block_widths[-1 - i]
@@ -673,11 +608,11 @@ class MultiScaleResnet(nn.Module):
                     inner_width, width, scale_factor, scale_factor, 0
                 ))
             net = nn.Sequential(
-                build_block(width, block_depth, mode, norm),
+                build_block(width, block_depth, mode, norm, activation=activation),
                 downsampling,
                 net,
                 upsampling,
-                build_block(width, block_depth, mode, norm),
+                build_block(width, block_depth, mode, norm, activation=activation),
             )
             if concat_skipconn:
                 net = nn.Sequential(
@@ -834,6 +769,7 @@ class UpsampleTwice(torch.nn.Module):
                     )
                 )
             )
+
     def forward(self, x):
         out = x
         for i in range(len(self.upsample_blocks)):
@@ -1041,66 +977,25 @@ class NUWaveStack(nn.Module):
             out = self.nwblocks[i]( out, reference_x, band)
         return out
 
-    # def forward(self, initial_x, reference_x, band):
-    #     initial_x = initial_x.squeeze(1)
-    #     reference_x = reference_x.squeeze(1)
-    #     x = torch.stack((initial_x, reference_x), dim=1)
-
-    #     x = self.input_projection(x)
-
-    #     y_l, y_g = torch.split(x, [x.shape[1] - self.ffc1.global_in_num, self.ffc1.global_in_num], dim=1)
-    #     y_l, y_g = self.ffc1(y_l, y_g, band)
-    #     gate_l, filter_l = torch.chunk(y_l, 2, dim=1)
-    #     gate_g, filter_g = torch.chunk(y_g, 2, dim=1)
-    #     gate, filter = torch.cat((gate_l, gate_g), dim=1), torch.cat((filter_l, filter_g), dim=1)
-    #     y = torch.sigmoid(gate) * torch.tanh(filter)
-    #     y = self.output_projection(y)
-    #     residual, skip = torch.chunk(y, 2, dim=1)
-    #     out = self.output_projection2(residual)
-    #     return out, skip
-
-
-# class NUWaveStack(nn.Module):
-#     def __init__(self, residual_channels, bsft_channels, n_blocks=1):
-#         super().__init__()
-#         self.nwblocks = nn.ModuleList([
-#             NUWaveBlock(residual_channels, bsft_channels) for _ in range(n_blocks)
-#         ])
-#         self.len_res = n_blocks
-#         self.skip_projection = nn.Conv1d(residual_channels, residual_channels, 1)
-#         self.output_projection = nn.Conv1d(residual_channels, 1, 1)
-
-#     def forward(self, initial_x, reference_x, band):
-#         out, skip_total = self.nwblocks[0](initial_x, reference_x, band)
-#         for i in range(1, len(self.nwblocks)):
-#             out, skip_connection = self.nwblocks[i](out, reference_x, band)
-#             skip_total = skip_total + skip_connection
-
-#         skip_total = skip_total / sqrt(self.len_res)
-#         skip_total = self.skip_projection(skip_total)
-#         skip_total = silu(skip_total)
-#         skip_total = self.output_projection(skip_total)
-#         return skip_total
-
-
-
 
 class HiFiUpsampling(torch.nn.Module):
     def __init__(
             self,
             resblock="2",
+            hifi_upsample_rates=(8, 8, 2, 2),
             upsample_initial_channel=128,
             resblock_kernel_sizes=(3, 7, 11),
             resblock_dilation_sizes=((1, 3, 5), (1, 3, 5), (1, 3, 5)),
             conv_pre_kernel_size=1,
             input_channels=513,
             norm_type: Literal["weight", "spectral"] = "weight",
+            activation: Literal["leaky_relu", "snake"] = "leaky_relu"
     ):
         super().__init__()
         self.norm = dict(weight=weight_norm, spectral=spectral_norm)[norm_type]
         self.norm_type = norm_type
         self.num_kernels = len(resblock_kernel_sizes)
-        self.upsample_rates = [8, 8, 2, 2]  
+        self.upsample_rates = hifi_upsample_rates
         self.upsample_kernel_sizes = [r * 2 for r in self.upsample_rates]
         self.num_upsamples = len(self.upsample_rates)
         
@@ -1110,7 +1005,6 @@ class HiFiUpsampling(torch.nn.Module):
             conv_pre_kernel_size
         )
 
-        #self.ups = None
         self.resblocks = nn.ModuleList()
         self.out_channels = self.make_resblocks(
             resblock,
@@ -1119,6 +1013,7 @@ class HiFiUpsampling(torch.nn.Module):
             upsample_initial_channel,
             resblock_kernel_sizes,
             resblock_dilation_sizes,
+            activation
         )
 
     def make_conv_pre(self, input_channels, upsample_initial_channel, kernel_size):
@@ -1138,6 +1033,7 @@ class HiFiUpsampling(torch.nn.Module):
         upsample_initial_channel,
         resblock_kernel_sizes,
         resblock_dilation_sizes,
+        activation
     ):
         resblock = (
             ResBlock1 if resblock == "1" else ResBlock2
@@ -1145,30 +1041,32 @@ class HiFiUpsampling(torch.nn.Module):
 
         self.ups = nn.ModuleList()
         for i, (u, k) in enumerate(zip(upsample_rates, upsample_kernel_sizes)):
-            self.ups.append(
-                self.norm(
-                    nn.ConvTranspose1d(
-                        upsample_initial_channel // (2 ** i),
-                        upsample_initial_channel // (2 ** (i + 1)),
-                        k,
-                        u,
-                        padding=(k - u) // 2,
+            if u > 1:
+                self.ups.append(
+                    self.norm(
+                        nn.ConvTranspose1d(
+                            128 // (2 ** i),
+                            128 // (2 ** (i + 1)),
+                            k,
+                            u,
+                            padding=(k - u) // 2,
+                        )
                     )
                 )
-            )
+            else:
+                self.ups.append(None)
 
         projection_kernels = [5, 7]
         self.conv_posts = nn.ModuleList()
         ch = None
-        #self.resblocks = nn.ModuleList()
         
         for i in range(len(self.ups)):
-            ch = upsample_initial_channel // (2 ** (i + 1))
-            for j, (k, d) in enumerate(
+            ch = 128 // (2 ** (i + 1))
+            for _, (k, d) in enumerate(
                 zip(resblock_kernel_sizes, resblock_dilation_sizes)
             ):
                 self.resblocks.append(
-                    resblock(ch, k, d, norm_type=self.norm_type)
+                    resblock(ch, k, d, norm_type=self.norm_type, activation=activation)
                 )
 
             if 1 <= i < 3:
@@ -1181,6 +1079,14 @@ class HiFiUpsampling(torch.nn.Module):
                     )
                 )
         self.ups.apply(init_weights)
+        self.is_first_ups = upsample_rates[0] > 1
+
+        self.activation_post = TorchActivation1d(
+                           activation=SnakeBeta(
+                                ch, alpha_logscale=True
+                            )
+                        ) if activation == "snake" else nn.LeakyReLU(LRELU_SLOPE)
+
         return ch
 
     def forward(self, x, **batch):
@@ -1188,8 +1094,9 @@ class HiFiUpsampling(torch.nn.Module):
         x = self.conv_pre(x)
 
         for i in range(self.num_upsamples):
-            x = F.leaky_relu(x, LRELU_SLOPE)
-            x = self.ups[i](x)
+            # x = F.leaky_relu(x, LRELU_SLOPE)
+            if i > 0 or self.is_first_ups:
+                x = self.ups[i](x)
             
             xs = None
             for j in range(self.num_kernels):
@@ -1205,7 +1112,7 @@ class HiFiUpsampling(torch.nn.Module):
                 _x = torch.tanh(_x)
                 outs.append(_x)
 
-        x = F.leaky_relu(x)
+        x = self.activation_post(x)
         return x, outs
 
 

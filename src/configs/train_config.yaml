@@ -7,12 +7,12 @@ defaults:
   - _self_
 gen_optimizer:
   _target_: torch.optim.AdamW
-  lr: 2e-4
+  lr: 3e-4
   betas: [0.8, 0.99]
   weight_decay: 0.01
 disc_optimizer:
   _target_: torch.optim.AdamW
-  lr: 2e-4
+  lr: 1e-4
   betas: [0.8, 0.99]
   weight_decay: 0.01
 gen_lr_scheduler:
@@ -23,11 +23,13 @@ disc_lr_scheduler:
   gamma: 0.999997
 loss_function:
   _target_: src.loss.HiFiGANLoss
+  loss_type: msstft # or melspec
+  spectral_complex_loss: True # only for msstft
 trainer:
   log_step: 200
   n_epochs: 100
   epoch_len: 500
-  device_tensors: ["wav_lr", "wav_hr", "melspec_lr", "melspec_hr"] # which tensors should be on device (ex. GPU)
+  device_tensors: ["wav_lr", "wav_hr", "reference_wav", "melspec_lr", "melspec_hr"] # which tensors should be on device (ex. GPU)
   resume_from: null # null or path to the checkpoint dir with *.pth and config.yaml
   device: auto # device name or "auto"
   override: True # if True, will override the previous run with the same name

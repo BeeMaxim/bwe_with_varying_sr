@@ -101,11 +101,12 @@ class VCTKDataset(BaseDataset):
 
         input_audio_lr = normalize(vctk_audio_lr)[None] * 0.95
         reference_wav = librosa.resample(
-                    vctk_audio_lr, orig_sr=self.initial_sr, target_sr=self.target_sr, res_type="polyphase"
+                    input_audio_lr[0], orig_sr=self.initial_sr, target_sr=self.target_sr, res_type="polyphase"
                 )
         reference_wav = torch.FloatTensor(reference_wav)
 
         input_audio_hr = normalize(vctk_audio_hr)[None] * 0.95
+
         assert input_audio_lr.shape[1] == vctk_audio_lr.size
         assert input_audio_hr.shape[1] == vctk_audio_hr.size
 

@@ -333,7 +333,8 @@ class A2AHiFiPlusGeneratorV2(HiFiPlusGenerator):
         return x
 
     def forward(self, x, *args, **batch):
-        x_orig = x.clone()
+        # x_orig = x.clone()
+        x_orig = batch['reference_wav'].clone()
         x_orig = x_orig[:, :, : x_orig.shape[2] // 1024 * 1024]
         x = self.get_melspec(x_orig)
         x = self.apply_spectralunet(x)
@@ -348,7 +349,7 @@ class A2AHiFiPlusGeneratorV2(HiFiPlusGenerator):
         x = self.conv_post(x)
         x = torch.tanh(x)
 
-        return x
+        return x, [x]
 
 
 class HiFi_plus_plus(nn.Module):

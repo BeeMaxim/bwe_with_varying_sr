@@ -261,7 +261,7 @@ class Decoder(nn.Module):
         super().__init__()
         # decode
         kernel_size = kernel_size
-        de_c_in = [64, 128, 128, 513]
+        de_c_in = [64, 128, 128, 129]
 
         dec_1 = nn.Sequential(
             nn.ConstantPad1d((kernel_size[0] - 1, 0), 0),
@@ -310,7 +310,7 @@ class Decoder(nn.Module):
         x_out = x.unsqueeze(1) # (B, 1, F, T)
         x_in = x_list[0].unsqueeze(1)  # (B, 1, F, T)
         x_mask_in = torch.add(x_out, x_in)
-        x_mask_in = x_mask_in.squeeze(1)
+        #x_mask_in = x_mask_in.squeeze(1)
         x_dual_mask = self.mask1(x_mask_in) * self.mask2(x_mask_in)
         out_mask = self.mask_gate(self.maskconv(x_dual_mask))  # mask
         out_full = x_out * out_mask
