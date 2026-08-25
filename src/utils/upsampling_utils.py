@@ -309,9 +309,9 @@ class TorchActivation1d(nn.Module):
 
     # x: [B,C,T]
     def forward(self, x):
-        x = self.upsample(x)
+        # x = self.upsample(x)
         x = self.act(x)
-        x = self.downsample(x)
+        # x = self.downsample(x)
 
         return x
 
