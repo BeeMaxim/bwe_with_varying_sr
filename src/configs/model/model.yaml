@@ -30,7 +30,7 @@ generator_config:
   use_skip_connect: True
   waveunet_input: "both"
 
-  activation: "leaky_relu"
+  activation: "snake"
 
   n_fft: 256
   hop_size: 64
@@ -40,3 +40,4 @@ defaults:
   - _self_
   - discriminators@discriminators.msstft: MSSTFT
   #- discriminators@discriminators.mpd: MPD
+  #- discriminators@discriminators.msd: MSD

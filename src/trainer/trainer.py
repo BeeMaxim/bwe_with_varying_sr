@@ -69,12 +69,22 @@ class Trainer(BaseTrainer):
         # disc call for generator loss
         for disc_name, disc in self.model.discriminators.items():
             _, gt_feats, fake_out, fake_feats = disc(target_wav, wav_fake, **batch)
+            if not self.is_train:
+                disc.train()
+                batch[f"{disc_name}_step_1"] = self._get_audio_from_disc_grad(disc, step=1, **batch)
+                batch[f"{disc_name}_step_1_spec"] = self.create_spec(batch[f"{disc_name}_step_1"].squeeze(1))
+                batch[f"{disc_name}_step_5"] = self._get_audio_from_disc_grad(disc, step=5, **batch)
+                batch[f"{disc_name}_step_5_spec"] = self.create_spec(batch[f"{disc_name}_step_5"].squeeze(1))
+                disc.eval()
+
             batch[f"{disc_name}_gt_feats"] = gt_feats
             batch[f"{disc_name}_fake_out"] = fake_out
             batch[f"{disc_name}_fake_feats"] = fake_feats
 
         batch["mel_spec_fake"] = self.create_mel_spec(batch["generated_wav"].squeeze(1))
         batch["mel_spec_hr"] = self.create_mel_spec(target_wav.squeeze(1))
+        batch["spec_hr"] = self.create_spec(target_wav.squeeze(1))
+        batch["spec_fake"] = self.create_spec(wav_fake.squeeze(1))
         
         adv_gen_losses, feats_gen_losses, mel_spec_loss, gen_loss = self.criterion.generator_loss(batch)
 
@@ -95,9 +105,37 @@ class Trainer(BaseTrainer):
             metrics.update(loss_name, batch[loss_name].item())
 
         if not self.is_train:
+            disc_name = list(self.model.discriminators.keys())[0]
             calculate_all_metrics(batch['generated_wav'], batch['wav_hr'], self.metrics["inference"], self.config.datasets.val.initial_sr, self.config.datasets.val.target_sr)
+            calculate_all_metrics(batch[f"{disc_name}_step_1"], batch['wav_hr'], self.metrics["inference_step1"], self.config.datasets.val.initial_sr, self.config.datasets.val.target_sr)
+            calculate_all_metrics(batch[f"{disc_name}_step_5"], batch['wav_hr'], self.metrics["inference_step5"], self.config.datasets.val.initial_sr, self.config.datasets.val.target_sr)
 
         return batch
+
+    def _get_audio_from_disc_grad(self, disc, step=1, **batch):
+        x = batch["generated_wav"]
+
+        for _ in range(step):
+            x = self._get_audio_from_disc_grad_step(disc, x, **batch)
+
+        return x
+
+    def _get_audio_from_disc_grad_step(self, disc, current_outs, **batch):
+        current_outs.requires_grad_(True)
+
+        with torch.enable_grad():
+            _, _, dsc_output, _ = disc(current_outs, current_outs, **batch)
+            loss = 0.0
+            for predicted in dsc_output:
+                pred_loss = torch.mean((1 - predicted)**2)
+                loss += pred_loss
+            grad = torch.autograd.grad(loss, current_outs)[0]
+
+        # grad = grad / (grad.flatten(1).norm(dim=1, keepdim=True) + 1e-8)
+        eta = 3e-4
+        x = (current_outs - eta * grad).detach()
+
+        return x
 
     def _log_batch(self, batch_idx, batch, mode="train"):
         """
@@ -126,11 +164,28 @@ class Trainer(BaseTrainer):
             self.writer.add_audio(f"initial_wav_lr_{batch_idx}_{i}", wav_lr[i][:, :batch['initial_len_lr'][i]], self.config.datasets.val.initial_sr)
             self.writer.add_audio(f"initial_wav_hr_{batch_idx}_{i}", wav_hr[i][:, :batch['initial_len_hr'][i]], self.config.datasets.val.target_sr)
             self.writer.add_audio(f"generated_wav_{batch_idx}_{i}", generated_wav[i][:, :batch['initial_len_hr'][i]], self.config.datasets.val.target_sr)
+            for key, value in batch.items():
+                if key.endswith("step_1"):
+                    disc = key.split('_')[0]
+                    self.writer.add_audio(f"{disc}_shift_{batch_idx}_{i}_step_1", value[i][:, :batch['initial_len_hr'][i]], self.config.datasets.val.target_sr)
+                if key.endswith("step_5"):
+                    disc = key.split('_')[0]
+                    self.writer.add_audio(f"{disc}_shift_{batch_idx}_{i}_step_5", value[i][:, :batch['initial_len_hr'][i]], self.config.datasets.val.target_sr)
 
 
-    def log_spectrogram(self, batch_idx, melspec_lr, melspec_hr,  mel_spec_fake, partition, **batch):
+    def log_spectrogram(self, batch_idx, melspec_lr, melspec_hr, mel_spec_fake, partition, **batch):
         actual_batch_size = min(self.config.dataloader.val.batch_size, len(melspec_lr))
         for i in range(actual_batch_size):
+            for key, value in batch.items():
+                if key.endswith("step_1_spec"):
+                    disc = key.split('_')[0]
+                    image = plot_spectrogram(value[i].detach().cpu())
+                    self.writer.add_image(f"{batch_idx}_{i}_{disc}_shift_step_1_spec", image)
+                if key.endswith("step_5_spec"):
+                    disc = key.split('_')[0]
+                    image = plot_spectrogram(value[i].detach().cpu())
+                    self.writer.add_image(f"{batch_idx}_{i}_{disc}_shift_step_5_spec", image)
+
             spectrogram_for_plot_real_lr = melspec_lr[i].detach().cpu()[:, :batch['initial_len_melspec_lr'][i]]
             spectrogram_for_plot_real_hr = melspec_hr[i].detach().cpu()[:, :batch['initial_len_melspec_hr'][i]]
             spectrogram_for_plot_fake = mel_spec_fake[i].detach().cpu()[:, :batch['initial_len_melspec_hr'][i]]
@@ -140,4 +195,10 @@ class Trainer(BaseTrainer):
             self.writer.add_image(f"melspectrogram_real_hr_{batch_idx}_{i}", image_hr)
             image_fake = plot_spectrogram(spectrogram_for_plot_fake)
             self.writer.add_image(f"melspectrogram_fake_{batch_idx}_{i}", image_fake)
+
+            image_spec = plot_spectrogram(batch["spec_hr"][i].detach().cpu())
+            self.writer.add_image(f"{batch_idx}_{i}_spectrogram_real_hr", image_spec)
+            
+            image_spec = plot_spectrogram(batch["spec_fake"][i].detach().cpu())
+            self.writer.add_image(f"{batch_idx}_{i}_spectrogram_fake_hr", image_spec)
         

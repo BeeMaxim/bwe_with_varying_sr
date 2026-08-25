@@ -24,3 +24,47 @@ inference:
     name: "CBAK"
   - _target_: src.metrics.COVL
     name: "COVL"
+
+inference_step1:
+  - _target_: src.metrics.MOSNet
+    name: "MOS_step1"
+  # - _target_: src.metrics.VGGDistance
+  #   name: "VGG_dist"
+  - _target_: src.metrics.LSD
+    name: "LSD_step1"
+  - _target_: src.metrics.LSD_LF
+    name: "LSD_LF_step1"
+  - _target_: src.metrics.LSD_HF
+    name: "LSD_HF_step1"
+  - _target_: src.metrics.STOI
+    name: "STOI_step1"
+  - _target_: src.metrics.PESQ
+    name: "PESQ_step1"
+  - _target_: src.metrics.CSIG
+    name: "CSIG_step1"
+  - _target_: src.metrics.CBAK
+    name: "CBAK_step1"
+  - _target_: src.metrics.COVL
+    name: "COVL_step1"
+
+inference_step5:
+  - _target_: src.metrics.MOSNet
+    name: "MOS_step5"
+  # - _target_: src.metrics.VGGDistance
+  #   name: "VGG_dist"
+  - _target_: src.metrics.LSD
+    name: "LSD_step5"
+  - _target_: src.metrics.LSD_LF
+    name: "LSD_LF_step5"
+  - _target_: src.metrics.LSD_HF
+    name: "LSD_HF_step5"
+  - _target_: src.metrics.STOI
+    name: "STOI_step5"
+  - _target_: src.metrics.PESQ
+    name: "PESQ_step5"
+  - _target_: src.metrics.CSIG
+    name: "CSIG_step5"
+  - _target_: src.metrics.CBAK
+    name: "CBAK_step5"
+  - _target_: src.metrics.COVL
+    name: "COVL_step5"

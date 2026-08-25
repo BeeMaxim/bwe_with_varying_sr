@@ -79,6 +79,7 @@ class HiFiGANLoss(nn.Module):
     def discriminator_loss(self, batch):
         total_loss = 0
         losses = {}
+
         for key in batch:
             if key.endswith("gt_out"):
                 disc_name = key[:-7]

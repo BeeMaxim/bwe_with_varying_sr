@@ -8,7 +8,7 @@ import numpy as np
 
 class MelSpectrogram(nn.Module):
 
-    def __init__(self, sr=16000, win_length=1024, hop_length=256, n_fft= 1024, f_min=0, f_max=8000, n_mels=80 , power=1.0, pad_value=-11.5129251):
+    def __init__(self, sr=16000, win_length=1024, hop_length=256, n_fft=1024, f_min=0, f_max=8000, n_mels=80 , power=1.0, pad_value=-11.5129251):
         super().__init__()
         self.mel_spectrogram = torchaudio.transforms.MelSpectrogram(
             sample_rate=sr,
@@ -43,6 +43,36 @@ class MelSpectrogram(nn.Module):
         """
 
         mel = self.mel_spectrogram(audio) \
+            .clamp_(min=1e-5) \
+            .log_()
+
+        return mel
+
+
+
+class Spectrogram(nn.Module):
+
+    def __init__(self, win_length=1024, hop_length=256, n_fft=1024):
+        super().__init__()
+        self.spectrogram = torchaudio.transforms.Spectrogram(
+            win_length=win_length,
+            hop_length=hop_length,
+            window_fn=torch.hann_window,
+            n_fft=n_fft,
+            normalized=True,
+            center=False,
+            pad_mode=None,
+            power=None
+        )
+
+    def forward(self, audio: torch.Tensor) -> torch.Tensor:
+        """
+        :param audio: Expected shape is [B, T]
+        :return: Shape is [B, n_mels, T']
+        """
+
+        mel = self.spectrogram(audio) \
+            .abs() \
             .clamp_(min=1e-5) \
             .log_()
 

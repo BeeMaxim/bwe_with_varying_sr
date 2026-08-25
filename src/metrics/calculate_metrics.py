@@ -28,6 +28,8 @@ class Metric(ABC):
         self.val_size = None
         self.result = defaultdict(list)
         self.big_val_size = big_val_size
+        if name is not None:
+            self.name = name
 
     @abstractmethod
     def better(self, first, second):
@@ -391,7 +393,7 @@ class COVL(CSEMetric):
         self.func = lambda x, y: composite_eval(x, y)["covl"]
 
 
-def calculate_all_metrics(wavs, reference_wavs, metrics, initial_sr, target_sr,  n_max_files=None):
+def calculate_all_metrics(wavs, reference_wavs, metrics, initial_sr, target_sr, n_max_files=None):
     scores = {metric.name: [] for metric in metrics}
     for x, y in tqdm(
         itertools.islice(zip(wavs, reference_wavs), n_max_files),
@@ -409,10 +411,11 @@ def calculate_all_metrics(wavs, reference_wavs, metrics, initial_sr, target_sr, 
         x = torch.from_numpy(x)[None, None]
         y = torch.from_numpy(y)[None, None]
         for metric in metrics:
-            if metric.name=='LSD_LF' or metric.name=='LSD_HF':
+            if metric.name.startswith('LSD_LF') or metric.name.startswith('LSD_HF'):
                 metric.__call__(x, y, initial_sr, target_sr)
             else:
                 metric.__call__(x, y)
-            scores[metric.name] += [np.mean(metric.result["mean"])]
+            metric_name = metric.name
+            scores[metric_name] += [np.mean(metric.result["mean"])]
     scores = {k: (np.mean(v), np.std(v)) for k, v in scores.items()}
     return scores

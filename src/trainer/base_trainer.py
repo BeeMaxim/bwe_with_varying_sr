@@ -8,9 +8,11 @@ import itertools
 from src.datasets.data_utils import inf_loop
 from src.metrics.tracker import MetricTracker
 from src.utils.io_utils import ROOT_PATH
-from src.model.melspec import  MelSpectrogram
+from src.model.melspec import MelSpectrogram, Spectrogram
 import pandas as pd
 import numpy as np
+import torch.nn as nn
+from torch.nn.utils import remove_weight_norm
 
 
 class BaseTrainer:
@@ -78,6 +80,7 @@ class BaseTrainer:
         self.gen_lr_scheduler = gen_lr_scheduler
         self.disc_lr_scheduler = disc_lr_scheduler
         self.create_mel_spec = MelSpectrogram(sr=config.datasets.train.target_sr).to(self.device)
+        self.create_spec = Spectrogram().to(self.device)
         self.train_dataloader = dataloaders["train"]
         if epoch_len is None:
             self.epoch_len = len(self.train_dataloader)
@@ -126,6 +129,8 @@ class BaseTrainer:
         self.evaluation_metrics = MetricTracker(
             *self.config.writer.loss_names,
             *[m.name for m in self.metrics["inference"]],
+            *[m.name for m in self.metrics["inference_step1"]],
+            *[m.name for m in self.metrics["inference_step5"]],
             writer=self.writer,
         )
 
@@ -288,10 +293,12 @@ class BaseTrainer:
                 self._log_batch(
                     batch_idx, batch, part
                 )
-        for i in range(len(self.metrics['inference'])):
-            self.evaluation_metrics.update(self.metrics['inference'][i].name, np.mean(self.metrics['inference'][i].result['mean']))
-            self.metrics['inference'][i].result['mean'] = []
-            self.metrics['inference'][i].result['std'] = []
+
+        for key in ['inference', 'inference_step1', 'inference_step5']:
+            for i in range(len(self.metrics[key])):
+                self.evaluation_metrics.update(self.metrics[key][i].name, np.mean(self.metrics[key][i].result['mean']))
+                self.metrics[key][i].result['mean'] = []
+                self.metrics[key][i].result['std'] = []
 
         self._log_scalars(self.evaluation_metrics)
              
@@ -542,8 +549,14 @@ class BaseTrainer:
         checkpoint = torch.load(pretrained_path, self.device, weights_only=False)
 
         if checkpoint.get("state_dict") is not None:
-            self.model.load_state_dict(checkpoint["state_dict"])
+            self.model.load_state_dict(checkpoint["state_dict"], strict=False)
         else:
             #self.model.load_state_dict(checkpoint)
-            self.model.generator.load_state_dict(checkpoint["generator"])
-            #self.model.generator.load_state_dict(checkpoint["models"]["generator"]["state"])
+            self.model.generator.load_state_dict(checkpoint["generator"], strict=False)
+            # self.model.generator.load_state_dict(checkpoint["models"]["generator"]["state"])
+        for m in self.model.modules():
+            if isinstance(m, nn.Conv1d):
+                try:
+                    remove_weight_norm(m)
+                except ValueError:
+                    pass
