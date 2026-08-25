@@ -54,8 +54,8 @@ def main(config):
     # get function handles of loss and metrics
     loss_function = instantiate(config.loss_function).to(device)
 
-    metrics = {"train": [], "inference": []}
-    for metric_type in ["train", "inference"]:
+    metrics = {"train": [], "inference": [], "inference_step1": [], "inference_step5": []}
+    for metric_type in ["train", "inference", "inference_step1", "inference_step5"]:
         for metric_config in config.metrics.get(metric_type, []):
             # use text_encoder in metrics
             metrics[metric_type].append(
