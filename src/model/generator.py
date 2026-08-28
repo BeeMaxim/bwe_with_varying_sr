@@ -368,6 +368,14 @@ class A2AHiFiPlusGenerator(HiFiPlusGenerator):
         self.hop_size = hop_size
         self.win_size = win_size
 
+
+        self.encoder = nn.Sequential(
+            nn.Conv1d(1, 32, 16, padding=4, stride=8),
+            nn.LeakyReLU(),
+            nn.Conv1d(32, 129, 16, padding=4, stride=8),
+            nn.LeakyReLU()
+        )
+
     def get_stft(self, x, sampling_rate):
         shape = x.shape
         x = x.view(shape[0] * shape[1], shape[2])
@@ -492,8 +500,8 @@ class A2AHiFiPlusGenerator(HiFiPlusGenerator):
             band8_16 = band8_16.repeat(batch_size, 2, 1).to(upsampled_x.device)
             x_res = self.nw_stack2(upsampled_x, padded_reference, band8_16)
 
-
-        x_res = self.get_stft(x_res, sampling_rate=target_sr)
+        # x_res = self.get_stft(x_res, sampling_rate=target_sr)
+        x_res = self.encoder(x_res)
         if self.use_spectralunet:
             x_res = self.apply_spectralunet(x_res)
 

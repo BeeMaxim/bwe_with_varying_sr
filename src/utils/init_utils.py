@@ -80,10 +80,11 @@ def log_git_commit_and_patch(save_dir):
     print("Logging git commit and patch...")
     commit_path = save_dir / "git_commit.txt"
     patch_path = save_dir / "git_diff.patch"
+    '''
     with commit_path.open("w") as f:
         subprocess.call(["git", "rev-parse", "HEAD"], stdout=f)
     with patch_path.open("w") as f:
-        subprocess.call(["git", "diff", "HEAD"], stdout=f)
+        subprocess.call(["git", "diff", "HEAD"], stdout=f)'''
 
 
 def resume_config(save_dir):
