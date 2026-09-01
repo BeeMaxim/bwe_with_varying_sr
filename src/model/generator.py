@@ -18,6 +18,7 @@ from pesq import pesq
 from pystoi import stoi
 from src.model.bigvgan import BigVUpsampling
 from src.model.rndvoc import RNDVocoder16k
+from src.model.comvo import ComVo
 
 import matplotlib
 matplotlib.use('TkAgg')
@@ -74,13 +75,14 @@ def stft(y, n_fft, num_mels, sampling_rate, hop_size, win_size, fmin, fmax, cent
         normalized=False,
         onesided=True,
         return_complex=True,
-    )
+    ).to(torch.complex64)
+
     '''
     mel = torch.matmul(mel_basis[str(fmax) + "_" + str(y.device)], freq_and_time.abs())
     mel = spectral_normalize_torch(mel)
     return mel'''
 
-    return torch.abs(freq_and_time)
+    return torch.abs(freq_and_time), freq_and_time
 
 def closest_power_of_two(n):
     return 1 << (n - 1).bit_length()
@@ -158,6 +160,10 @@ class HiFiPlusGenerator(torch.nn.Module):
         )
 
         ch = self.hifi.out_channels
+        ch = 1
+
+        self.hifi = ComVo(input_channels=513, dim=128, intermediate_dim=384, num_layers=8, n_quantization=128)
+        self.hifi.out_channels = ch
         
         if self.use_spectralmasknet:
             self.spectralmasknet = upsampling_utils.SpectralMaskNet(
@@ -265,6 +271,15 @@ class STFTMag(nn.Module):
         stft = torch.stft(x, self.nfft, self.hop, window=self.window, return_complex=False)
         mag = torch.norm(stft, p=2, dim=-1)
         return mag
+
+
+class LN(nn.Module):
+    def __init__(self, channels):
+        super().__init__()
+        self.norm = nn.LayerNorm(channels)
+
+    def forward(self, x):
+        return self.norm(x.transpose(1, 2)).transpose(1, 2)
     
 
 class A2AHiFiPlusGenerator(HiFiPlusGenerator):
@@ -369,17 +384,10 @@ class A2AHiFiPlusGenerator(HiFiPlusGenerator):
         self.win_size = win_size
 
 
-        self.encoder = nn.Sequential(
-            nn.Conv1d(1, 32, 16, padding=4, stride=8),
-            nn.LeakyReLU(),
-            nn.Conv1d(32, 129, 16, padding=4, stride=8),
-            nn.LeakyReLU()
-        )
-
     def get_stft(self, x, sampling_rate):
         shape = x.shape
         x = x.view(shape[0] * shape[1], shape[2])
-        x = stft(x, n_fft=self.n_fft, num_mels=80, sampling_rate=sampling_rate, hop_size=self.hop_size, win_size=self.win_size, fmin=None, fmax=None)
+        x = stft(x, n_fft=self.n_fft, num_mels=80, sampling_rate=sampling_rate, hop_size=self.hop_size, win_size=self.win_size, fmin=None, fmax=None)[1]
         x = x.view(shape[0], -1, x.shape[-1])
         return x
     
@@ -466,6 +474,7 @@ class A2AHiFiPlusGenerator(HiFiPlusGenerator):
             band4_8 = band4_8.unsqueeze(0).unsqueeze(0) 
             band4_8 = band4_8.repeat(batch_size, 2, 1).to(upsampled_x.device)
             x_4_8 = self.nw_stack1(upsampled_x, x_half_resampled, band4_8)
+            # x_4_8 = upsampled_x
 
             upsampled_x_4 = self.upsampling_block2(x_4_8)
             highcut = initial_sr // 2 * 2
@@ -477,6 +486,7 @@ class A2AHiFiPlusGenerator(HiFiPlusGenerator):
             band8_16 = band8_16.unsqueeze(0).unsqueeze(0) 
             band8_16 = band8_16.repeat(batch_size, 2, 1).to(upsampled_x.device)
             x_res = self.nw_stack2(upsampled_x_4, padded_reference, band8_16)
+            # x_res = upsampled_x_4
 
         elif initial_sr==4000 and target_sr==8000:
             highcut = initial_sr // 2
@@ -500,8 +510,11 @@ class A2AHiFiPlusGenerator(HiFiPlusGenerator):
             band8_16 = band8_16.repeat(batch_size, 2, 1).to(upsampled_x.device)
             x_res = self.nw_stack2(upsampled_x, padded_reference, band8_16)
 
-        # x_res = self.get_stft(x_res, sampling_rate=target_sr)
-        x_res = self.encoder(x_res)
+        #x_res = self.nw_stack1(padded_reference, padded_reference, band8_16)
+        #x_res = self.nw_stack2(x_res, padded_reference, band8_16)
+
+        x_res = self.get_stft(x_res, sampling_rate=target_sr)
+        # x_res = self.encoder(x_res)
         if self.use_spectralunet:
             x_res = self.apply_spectralunet(x_res)
 

@@ -853,7 +853,7 @@ class BSFT(nn.Module):
 
 
 class FourierUnit(nn.Module):
-    def __init__(self, in_channels, out_channels, bsft_channels):
+    def __init__(self, in_channels, out_channels, bsft_channels, first=False):
         super(FourierUnit, self).__init__()
 
         self.conv_layer = Conv2d(in_channels=in_channels * 2, out_channels=out_channels * 2,
@@ -862,6 +862,10 @@ class FourierUnit(nn.Module):
         self.n_fft=1024
         self.hop_size=256
         self.win_size=1024
+        if first:
+            self.n_fft=256
+            self.hop_size=64
+            self.win_size=256
         self.hann_window=torch.hann_window(self.win_size)
 
     def forward(self, x, band):
@@ -888,12 +892,12 @@ class FourierUnit(nn.Module):
         return output
 
 class SpectralTransform(nn.Module):
-    def __init__(self, in_channels, out_channels, bsft_channels):
+    def __init__(self, in_channels, out_channels, bsft_channels, first=False):
         super(SpectralTransform, self).__init__()
         self.conv1 = Conv1d(
             in_channels, out_channels // 2, kernel_size=1, bias=False)
 
-        self.fu = FourierUnit(out_channels // 2, out_channels // 2, bsft_channels)
+        self.fu = FourierUnit(out_channels // 2, out_channels // 2, bsft_channels, first=first)
 
         self.conv2 = Conv1d(
             out_channels // 2, out_channels, kernel_size=1, bias=False)
@@ -908,7 +912,7 @@ class SpectralTransform(nn.Module):
 
 class FFC(nn.Module):
     def __init__(self, in_channels, out_channels, bsft_channels, kernel_size=3,
-                 ratio_gin=0.5, ratio_gout=0.5, padding=1):
+                 ratio_gin=0.5, ratio_gout=0.5, padding=1, dilation=1, first=False):
         super(FFC, self).__init__()
 
         in_cg = int(in_channels * ratio_gin)
@@ -920,10 +924,10 @@ class FFC(nn.Module):
         self.ratio_gout = ratio_gout
         self.global_in_num = in_cg
 
-        self.convl2l = Conv1d(in_cl, out_cl, kernel_size, padding=padding, bias=False)
-        self.convl2g = Conv1d(in_cl, out_cg, kernel_size, padding=padding, bias=False)
-        self.convg2l = Conv1d(in_cg, out_cl, kernel_size, padding=padding, bias=False)
-        self.convg2g = SpectralTransform(in_cg, out_cg, bsft_channels)
+        self.convl2l = Conv1d(in_cl, out_cl, kernel_size, padding=padding, dilation=dilation, bias=False)
+        self.convl2g = Conv1d(in_cl, out_cg, kernel_size, padding=padding, dilation=dilation, bias=False)
+        self.convg2l = Conv1d(in_cg, out_cl, kernel_size, padding=padding, dilation=dilation, bias=False)
+        self.convg2g = SpectralTransform(in_cg, out_cg, bsft_channels, first=first)
 
     def forward(self, x_l, x_g, band):
         out_xl = self.convl2l(x_l) + self.convg2l(x_g)
@@ -962,6 +966,41 @@ class NUWaveBlock(nn.Module):
         out = self.output_projection2(residual)
 
         return out
+
+
+class NUWaveMultiBlock(nn.Module):
+    def __init__(self, residual_channels, bsft_channels, kernel_size=3, dilation=1, first=False):
+        super().__init__()
+        self.first = first
+        self.input_projection = Conv1d(residual_channels, residual_channels, 1)
+        self.ffc1 = FFC(
+            residual_channels, 2 * residual_channels, bsft_channels,
+            kernel_size=kernel_size, ratio_gin=0.5, ratio_gout=0.5, padding="same", dilation=dilation, first=first
+        )
+        self.output_projection = Conv1d(residual_channels, 2 * residual_channels, 1)
+        self.output_projection2 = Conv1d(residual_channels, 1, 1)
+
+    def forward(self, x):
+        fft_size = 1024 // 2 + 1 if not self.first else 256 // 2 + 1
+        band = torch.ones(fft_size, dtype=x.dtype)
+        band = band.unsqueeze(0).unsqueeze(0) 
+        band = band.repeat(x.size(0), 2, 1).to(x.device)
+
+        x = self.input_projection(x)
+
+        y_l, y_g = torch.split(x, [x.shape[1] - self.ffc1.global_in_num, self.ffc1.global_in_num], dim=1)
+        y_l, y_g = self.ffc1(y_l, y_g, band)
+        gate_l, filter_l = torch.chunk(y_l, 2, dim=1)
+        gate_g, filter_g = torch.chunk(y_g, 2, dim=1)
+        gate, filter = torch.cat((gate_l, gate_g), dim=1), torch.cat((filter_l, filter_g), dim=1)
+        y = torch.sigmoid(gate) * torch.tanh(filter)
+        y = self.output_projection(y)
+
+        residual, skip = torch.chunk(y, 2, dim=1)
+        # out = self.output_projection2(residual)
+        out = residual
+
+        return out
     
     
 class NUWaveStack(nn.Module):
@@ -970,11 +1009,10 @@ class NUWaveStack(nn.Module):
         self.nwblocks = nn.ModuleList([NUWaveBlock(residual_channels, bsft_channels) for _ in range(n_blocks)])
 
 
-    def forward(self, initial_x, reference_x, band):
-        
-        out = self.nwblocks[0]( initial_x, reference_x, band)
-        for i in range(1,len(self.nwblocks)):
-            out = self.nwblocks[i]( out, reference_x, band)
+    def forward(self, initial_x, reference_x, band):      
+        out = self.nwblocks[0](initial_x, reference_x, band)
+        for i in range(1, len(self.nwblocks)):
+            out = self.nwblocks[i](out, reference_x, band)
         return out
 
 
@@ -1045,8 +1083,8 @@ class HiFiUpsampling(torch.nn.Module):
                 self.ups.append(
                     self.norm(
                         nn.ConvTranspose1d(
-                            128 // (2 ** i),
-                            128 // (2 ** (i + 1)),
+                            192 // (2 ** i),
+                            192 // (2 ** (i + 1)),
                             k,
                             u,
                             padding=(k - u) // 2,
@@ -1061,13 +1099,18 @@ class HiFiUpsampling(torch.nn.Module):
         ch = None
         
         for i in range(len(self.ups)):
-            ch = 128 // (2 ** (i + 1))
+            ch = 192 // (2 ** (i + 1))
             for _, (k, d) in enumerate(
                 zip(resblock_kernel_sizes, resblock_dilation_sizes)
             ):
-                self.resblocks.append(
-                    resblock(ch, k, d, norm_type=self.norm_type, activation=activation)
-                )
+                if i >= 1 and False:
+                    self.resblocks.append(NUWaveMultiBlock(ch, ch, kernel_size=k, dilation=d[i - 1]))
+                else:
+                    # self.resblocks.append(NUWaveMultiBlock(ch, ch, kernel_size=k, dilation=1, first=True))
+                    
+                    self.resblocks.append(
+                        resblock(ch, k, d, norm_type=self.norm_type, activation=activation)
+                    )
 
             if 1 <= i < 3:
                 self.conv_posts.append(
@@ -1103,7 +1146,7 @@ class HiFiUpsampling(torch.nn.Module):
                 if xs is None:
                     xs = self.resblocks[i * self.num_kernels + j](x)
                 else:
-                    xs += self.resblocks[i * self.num_kernels + j](x)
+                    xs = xs + self.resblocks[i * self.num_kernels + j](x)
             x = xs / self.num_kernels
     
             if self.num_upsamples - 3 <= i < self.num_upsamples - 1:
