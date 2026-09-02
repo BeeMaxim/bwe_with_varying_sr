@@ -478,7 +478,7 @@ class cConv2d(nn.Module):
             self.groups,
         )
 
-
+'''
 class ComplexNormLayer(nn.Module):
     def __init__(
         self, channels: int, eps: Optional[float] = 1e-6, affine: Optional[bool] = True
@@ -561,7 +561,120 @@ class cLayerNorm(ComplexNormLayer):
         imag = torch.imag(inp)
 
         real, imag, *_ = self.normalize(real, imag, dim=self.reduced_dim)
-        return torch.complex(real, imag).transpose(1, 2)
+        return torch.complex(real, imag).transpose(1, 2)'''
+
+
+class ComplexNormLayer(nn.Module):
+    def __init__(
+        self,
+        channels: int,
+        eps: float = 1e-5,
+        affine: bool = True,
+    ):
+        super().__init__()
+
+        self.channels = channels
+        self.eps = eps
+        self.affine = affine
+
+        if affine:
+            # Initially acts approximately like identity.
+            self.gamma_rr = nn.Parameter(
+                torch.full((channels,), math.sqrt(0.5))
+            )
+            self.gamma_ii = nn.Parameter(
+                torch.full((channels,), math.sqrt(0.5))
+            )
+            self.gamma_ri = nn.Parameter(
+                torch.zeros(channels)
+            )
+
+            self.beta_r = nn.Parameter(torch.zeros(channels))
+            self.beta_i = nn.Parameter(torch.zeros(channels))
+
+    def normalize(
+        self,
+        real: Tensor,
+        imag: Tensor,
+        dim: int,
+    ):
+        # Mean over channels
+        mean_r = real.mean(dim=dim, keepdim=True)
+        mean_i = imag.mean(dim=dim, keepdim=True)
+
+        r = real - mean_r
+        i = imag - mean_i
+
+        # 2x2 covariance matrix
+        Vrr = r.square().mean(dim=dim, keepdim=True)
+        Vii = i.square().mean(dim=dim, keepdim=True)
+        Vri = (r * i).mean(dim=dim, keepdim=True)
+
+        # Numerical stabilization
+        Vrr = Vrr + self.eps
+        Vii = Vii + self.eps
+
+        delta = (Vrr * Vii - Vri.square()).clamp_min(self.eps)
+        s = torch.sqrt(delta)
+
+        t = torch.sqrt((Vrr + Vii + 2.0 * s).clamp_min(self.eps))
+
+        inv_st = 1.0 / (s * t)
+
+        Wrr = (Vii + s) * inv_st
+        Wii = (Vrr + s) * inv_st
+        Wri = -Vri * inv_st
+
+        # Complex whitening
+        r_norm = Wrr * r + Wri * i
+        i_norm = Wri * r + Wii * i
+
+        if self.affine:
+            shape = [1] * r_norm.ndim
+            shape[dim] = self.channels
+
+            grr = self.gamma_rr.view(*shape)
+            gii = self.gamma_ii.view(*shape)
+            gri = self.gamma_ri.view(*shape)
+
+            br = self.beta_r.view(*shape)
+            bi = self.beta_i.view(*shape)
+
+            # IMPORTANT:
+            # use old values, don't overwrite real before computing imag
+            r0 = r_norm
+            i0 = i_norm
+
+            r_norm = grr * r0 + gri * i0 + br
+            i_norm = gri * r0 + gii * i0 + bi
+
+        return r_norm, i_norm
+
+
+class cLayerNorm(ComplexNormLayer):
+    def __init__(
+        self,
+        channels: int,
+        eps: float = 1e-5,
+        affine: bool = True,
+    ):
+        super().__init__(channels, eps, affine)
+
+    def forward(self, inp: Tensor) -> Tensor:
+        # inp: [B, T, C]
+        assert inp.ndim == 3
+        assert inp.shape[-1] == self.channels
+
+        real = inp.real
+        imag = inp.imag
+
+        real, imag = self.normalize(
+            real,
+            imag,
+            dim=-1,       # <-- normalize over C only
+        )
+
+        return torch.complex(real, imag)
 
 
 class PhaseQuantizationFunction(torch.autograd.Function):
@@ -733,7 +846,7 @@ class ISTFTHead(nn.Module):
         x = self.out(x).transpose(1, 2)
         S = torch.exp(x)
         mag = torch.abs(S)
-        S = S * (torch.clamp(mag, max=1e2) / (mag + 1e-9))
+        S = S * (torch.clamp(mag, max=1e3) / (mag + 1e-9))
         audio = self.istft(S)
         return audio
 
@@ -782,6 +895,12 @@ class ComVo(nn.Module):
             nn.init.constant_(m.bias, 0)
 
     def forward(self, x: torch.Tensor, **batch) -> torch.Tensor:
+        #log_abs = x.abs().clamp(min=1e-7).log()
+        #x = x / x.abs().clamp(min=1e-7) * log_abs
+        mag = x.abs().clamp_min(1e-7)
+        phase = torch.angle(x)
+
+        x = torch.complex(mag.log(), phase)
         x = self.embed(x)
         if self.n_quantization != 0:
             x = self.q_pha(x)
