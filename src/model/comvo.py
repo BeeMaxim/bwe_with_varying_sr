@@ -122,7 +122,7 @@ class cLinear(nn.Module):
             inp = torch.complex(inp, torch.zeros_like(inp))
         return ComplexLinearFunction.apply(inp, self.weight, self.bias)
 
-
+'''
 class ComplexConv1dFunction(Function):
     @staticmethod
     def forward(ctx, inp, weight, bias, stride, padding, dilation, groups):
@@ -310,6 +310,405 @@ class cConv1d(nn.Module):
     def forward(self, inp):
         #if inp.dtype != torch.cfloat:
         #    inp = torch.complex(inp, torch.zeros_like(inp))
+        return ComplexConv1dFunction.apply(
+            inp,
+            self.weight,
+            self.bias,
+            self.stride,
+            self.padding,
+            self.dilation,
+            self.groups,
+        )'''
+
+
+class ComplexConv1dFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(
+        ctx,
+        inp: torch.Tensor,
+        weight: torch.Tensor,
+        bias: Optional[torch.Tensor],
+        stride,
+        padding,
+        dilation,
+        groups,
+    ):
+        if not inp.is_complex():
+            inp = torch.complex(inp, torch.zeros_like(inp))
+
+        B, C_in, L = inp.shape
+        C_out, C_in_per_group, K = weight.shape
+
+        if C_in % groups != 0:
+            raise ValueError(
+                f"Input channels ({C_in}) must be divisible by groups ({groups})."
+            )
+
+        if C_out % groups != 0:
+            raise ValueError(
+                f"Output channels ({C_out}) must be divisible by groups ({groups})."
+            )
+
+        expected_cin_per_group = C_in // groups
+        if C_in_per_group != expected_cin_per_group:
+            raise ValueError(
+                f"Invalid weight shape {weight.shape}: expected "
+                f"in_channels_per_group={expected_cin_per_group}."
+            )
+
+        C_out_per_group = C_out // groups
+
+        # ---------------------------------------------------------
+        # Input layout for grouped real convolution:
+        #
+        # [R(group1), I(group1), R(group2), I(group2), ...]
+        #
+        # Shape:
+        #   [B, groups, 2, C_in_per_group, L]
+        # -> [B, 2*C_in, L]
+        # ---------------------------------------------------------
+        x_real = inp.real.reshape(
+            B, groups, C_in_per_group, L
+        )
+        x_imag = inp.imag.reshape(
+            B, groups, C_in_per_group, L
+        )
+
+        inp_block = torch.stack(
+            [x_real, x_imag],
+            dim=2,
+        ).reshape(B, 2 * C_in, L)
+
+        # ---------------------------------------------------------
+        # Weight layout:
+        #
+        # W = A + iB
+        #
+        # For every group:
+        #
+        # [ A  -B ]
+        # [ B   A ]
+        #
+        # Result:
+        # [groups, 2*C_out_per_group, 2*C_in_per_group, K]
+        # ---------------------------------------------------------
+        w = weight.reshape(
+            groups,
+            C_out_per_group,
+            C_in_per_group,
+            K,
+        )
+
+        W_r = w.real
+        W_i = w.imag
+
+        top = torch.cat([W_r, -W_i], dim=2)
+        bottom = torch.cat([W_i, W_r], dim=2)
+
+        weight_block = torch.stack(
+            [top, bottom],
+            dim=1,
+        ).reshape(
+            2 * C_out,
+            2 * C_in_per_group,
+            K,
+        )
+
+        out_block = F.conv1d(
+            inp_block,
+            weight_block,
+            bias=None,
+            stride=stride,
+            padding=padding,
+            dilation=dilation,
+            groups=groups,
+        )
+
+        L_out = out_block.shape[-1]
+
+        # ---------------------------------------------------------
+        # Output has:
+        #
+        # [R(group1), I(group1), R(group2), I(group2), ...]
+        #
+        # Restore [B, C_out, L_out] complex tensor.
+        # ---------------------------------------------------------
+        out_block = out_block.reshape(
+            B,
+            groups,
+            2,
+            C_out_per_group,
+            L_out,
+        )
+
+        out_real = out_block[:, :, 0, :, :]
+        out_imag = out_block[:, :, 1, :, :]
+
+        out = torch.complex(
+            out_real,
+            out_imag,
+        ).reshape(B, C_out, L_out)
+
+        if bias is not None:
+            out = out + bias.view(1, -1, 1)
+
+        ctx.save_for_backward(inp, weight, bias)
+        ctx.groups = groups
+        ctx.stride = stride
+        ctx.padding = padding
+        ctx.dilation = dilation
+        ctx.input_block_shape = inp_block.shape
+        ctx.weight_block = weight_block
+
+        return out
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor):
+        inp, weight, bias = ctx.saved_tensors
+
+        groups = ctx.groups
+        stride = ctx.stride
+        padding = ctx.padding
+        dilation = ctx.dilation
+
+        B, C_in, L_in = inp.shape
+        C_out, C_in_per_group, K = weight.shape
+        C_out_per_group = C_out // groups
+
+        L_out = grad_output.shape[-1]
+
+        # ---------------------------------------------------------
+        # grad_output:
+        #
+        # [B, C_out, L]
+        #
+        # -> [R(group1), I(group1), R(group2), I(group2), ...]
+        # ---------------------------------------------------------
+        grad_out_real = grad_output.real.reshape(
+            B,
+            groups,
+            C_out_per_group,
+            L_out,
+        )
+
+        grad_out_imag = grad_output.imag.reshape(
+            B,
+            groups,
+            C_out_per_group,
+            L_out,
+        )
+
+        grad_out_block = torch.stack(
+            [grad_out_real, grad_out_imag],
+            dim=2,
+        ).reshape(
+            B,
+            2 * C_out,
+            L_out,
+        )
+
+        # ---------------------------------------------------------
+        # Gradient w.r.t. block input
+        # ---------------------------------------------------------
+        grad_inp_block = F.grad.conv1d_input(
+            ctx.input_block_shape,
+            ctx.weight_block,
+            grad_out_block,
+            stride=stride,
+            padding=padding,
+            dilation=dilation,
+            groups=groups,
+        )
+
+        # IMPORTANT:
+        #
+        # grad_inp_block order is:
+        # [R(group1), I(group1), R(group2), I(group2), ...]
+        #
+        # Do NOT reshape [2*C] -> [C,2] blindly.
+        # ---------------------------------------------------------
+        grad_inp_block = grad_inp_block.reshape(
+            B,
+            groups,
+            2,
+            C_in_per_group,
+            L_in,
+        )
+
+        grad_inp_real = grad_inp_block[:, :, 0, :, :]
+        grad_inp_imag = grad_inp_block[:, :, 1, :, :]
+
+        grad_inp = torch.complex(
+            grad_inp_real,
+            grad_inp_imag,
+        ).reshape(B, C_in, L_in)
+
+        # ---------------------------------------------------------
+        # Gradient w.r.t. block weight
+        # ---------------------------------------------------------
+        inp_real = inp.real.reshape(
+            B,
+            groups,
+            C_in_per_group,
+            L_in,
+        )
+
+        inp_imag = inp.imag.reshape(
+            B,
+            groups,
+            C_in_per_group,
+            L_in,
+        )
+
+        inp_block = torch.stack(
+            [inp_real, inp_imag],
+            dim=2,
+        ).reshape(
+            B,
+            2 * C_in,
+            L_in,
+        )
+
+        grad_weight_block = torch.nn.grad.conv1d_weight(
+            inp_block,
+            ctx.weight_block.shape,
+            grad_out_block,
+            stride=stride,
+            padding=padding,
+            dilation=dilation,
+            groups=groups,
+        )
+
+        # ---------------------------------------------------------
+        # Convert block weight gradient back to complex weight.
+        #
+        # For each group:
+        #
+        # dA = d(top-left) + d(bottom-right)
+        # dB = d(bottom-left) - d(top-right)
+        # ---------------------------------------------------------
+        grad_weight_block = grad_weight_block.reshape(
+            groups,
+            2,
+            C_out_per_group,
+            2,
+            C_in_per_group,
+            K,
+        )
+
+        grad_top = grad_weight_block[:, 0]
+        grad_bottom = grad_weight_block[:, 1]
+
+        grad_A = (
+            grad_top[:, :, 0, :, :]
+            + grad_bottom[:, :, 1, :, :]
+        )
+
+        grad_B = (
+            grad_bottom[:, :, 0, :, :]
+            - grad_top[:, :, 1, :, :]
+        )
+
+        grad_weight = torch.complex(
+            grad_A,
+            grad_B,
+        ).reshape(
+            C_out,
+            C_in_per_group,
+            K,
+        )
+
+        # ---------------------------------------------------------
+        # Bias
+        # ---------------------------------------------------------
+        grad_bias = (
+            grad_output.sum(dim=(0, 2))
+            if bias is not None
+            else None
+        )
+
+        return (
+            grad_inp,
+            grad_weight,
+            grad_bias,
+            None,
+            None,
+            None,
+            None,
+        )
+
+
+class cConv1d(nn.Module):
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        kernel_size,
+        stride=1,
+        padding=0,
+        bias=True,
+        dilation=1,
+        groups=1,
+    ):
+        super().__init__()
+
+        if in_channels % groups != 0:
+            raise ValueError(
+                "in_channels must be divisible by groups."
+            )
+
+        if out_channels % groups != 0:
+            raise ValueError(
+                "out_channels must be divisible by groups."
+            )
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.padding = padding
+        self.dilation = dilation
+        self.groups = groups
+
+        self.weight = nn.Parameter(
+            torch.empty(
+                out_channels,
+                in_channels // groups,
+                kernel_size,
+                dtype=torch.cfloat,
+            )
+        )
+
+        self.bias = (
+            nn.Parameter(
+                torch.empty(
+                    out_channels,
+                    dtype=torch.cfloat,
+                )
+            )
+            if bias
+            else None
+        )
+
+        nn.init.trunc_normal_(
+            self.weight.real,
+            std=0.02,
+        )
+        nn.init.trunc_normal_(
+            self.weight.imag,
+            std=0.02,
+        )
+
+        if self.bias is not None:
+            nn.init.zeros_(self.bias)
+
+    def forward(self, inp):
+        if not inp.is_complex():
+            inp = torch.complex(
+                inp,
+                torch.zeros_like(inp),
+            )
+
         return ComplexConv1dFunction.apply(
             inp,
             self.weight,
