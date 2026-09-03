@@ -18,7 +18,7 @@ from pesq import pesq
 from pystoi import stoi
 from src.model.bigvgan import BigVUpsampling
 from src.model.rndvoc import RNDVocoder16k
-from src.model.comvo import ComVo
+from src.model.comvo import ComVo, ConvNeXtBlock
 
 import matplotlib
 matplotlib.use('TkAgg')
@@ -160,10 +160,13 @@ class HiFiPlusGenerator(torch.nn.Module):
         )
 
         ch = self.hifi.out_channels
-        ch = 1
+        #ch = 1
 
-        self.hifi = ComVo(input_channels=129, dim=128, intermediate_dim=384, num_layers=8, n_quantization=128)
-        self.hifi.out_channels = ch
+        #self.hifi = ComVo(input_channels=129, dim=128, intermediate_dim=384, num_layers=8, n_quantization=128)
+        #self.hifi.out_channels = ch
+        self.convnext = nn.ModuleList()
+        for _ in range(4):
+            self.convnext.append(ConvNeXtBlock(129, 384, layer_scale_init_value=1 / 4))
         
         if self.use_spectralmasknet:
             self.spectralmasknet = upsampling_utils.SpectralMaskNet(
@@ -518,7 +521,10 @@ class A2AHiFiPlusGenerator(HiFiPlusGenerator):
         if self.use_spectralunet:
             x_res = self.apply_spectralunet(x_res)
 
-        x_res, outs = self.hifi(x_res)
+        for i in range(4):
+            x_res = self.convnext[i](x_res)
+
+        x_res, outs = self.hifi(x_res.abs())
     
         if self.use_waveunet:
             x_res = self.apply_waveunet_a2a(x_res, padded_reference)
