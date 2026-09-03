@@ -1083,8 +1083,8 @@ class HiFiUpsampling(torch.nn.Module):
                 self.ups.append(
                     self.norm(
                         nn.ConvTranspose1d(
-                            192 // (2 ** i),
-                            192 // (2 ** (i + 1)),
+                            128 // (2 ** i),
+                            128 // (2 ** (i + 1)),
                             k,
                             u,
                             padding=(k - u) // 2,
@@ -1099,18 +1099,13 @@ class HiFiUpsampling(torch.nn.Module):
         ch = None
         
         for i in range(len(self.ups)):
-            ch = 192 // (2 ** (i + 1))
+            ch = 128 // (2 ** (i + 1))
             for _, (k, d) in enumerate(
                 zip(resblock_kernel_sizes, resblock_dilation_sizes)
             ):
-                if i >= 1 and False:
-                    self.resblocks.append(NUWaveMultiBlock(ch, ch, kernel_size=k, dilation=d[i - 1]))
-                else:
-                    # self.resblocks.append(NUWaveMultiBlock(ch, ch, kernel_size=k, dilation=1, first=True))
-                    
-                    self.resblocks.append(
-                        resblock(ch, k, d, norm_type=self.norm_type, activation=activation)
-                    )
+                self.resblocks.append(
+                    resblock(ch, k, d, norm_type=self.norm_type, activation=activation)
+                )
 
             if 1 <= i < 3:
                 self.conv_posts.append(

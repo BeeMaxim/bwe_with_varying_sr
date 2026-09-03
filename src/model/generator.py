@@ -162,7 +162,7 @@ class HiFiPlusGenerator(torch.nn.Module):
         ch = self.hifi.out_channels
         ch = 1
 
-        self.hifi = ComVo(input_channels=513, dim=128, intermediate_dim=384, num_layers=8, n_quantization=128)
+        self.hifi = ComVo(input_channels=129, dim=128, intermediate_dim=384, num_layers=8, n_quantization=128)
         self.hifi.out_channels = ch
         
         if self.use_spectralmasknet:

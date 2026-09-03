@@ -12,6 +12,7 @@ from torch import Tensor
 from typing import Optional, Tuple
 
 from torch.autograd import Function
+from src.utils.upsampling_utils import ResBlock1, TorchActivation1d
 
 
 
@@ -1286,7 +1287,17 @@ class ComVo(nn.Module):
         self.n_quantization = n_quantization
         if n_quantization != 0:
             self.q_pha = PhaseQuantizationLayer(n_quantization)
-        self.head = ISTFTHead(dim=dim, n_fft=1024, hop_length=256)
+        self.head = ISTFTHead(dim=dim, n_fft=256, hop_length=64)
+
+        self.resblocks = nn.ModuleList()
+        for _, (k, d) in enumerate(
+            zip([3, 7, 11], [[1, 3, 5], [1, 3, 5], [1, 3, 5]])
+        ):
+            self.resblocks.append(
+                ResBlock1(64, k, d, norm_type="weight", activation="snake")
+            )
+        self.pre_conv = nn.Conv1d(129, 64, 1)
+        self.post_conv = nn.Conv1d(64, 129, 1)
 
     def _init_weights(self, m):
         if isinstance(m, (nn.Conv1d, nn.Linear)):
@@ -1296,10 +1307,22 @@ class ComVo(nn.Module):
     def forward(self, x: torch.Tensor, **batch) -> torch.Tensor:
         #log_abs = x.abs().clamp(min=1e-7).log()
         #x = x / x.abs().clamp(min=1e-7) * log_abs
-        mag = x.abs().clamp_min(1e-7)
+        mag = x.abs()
         phase = torch.angle(x)
+        
+        x = self.pre_conv(mag)
+        xs = None
+        for j in range(3):
+            if xs is None:
+                xs = self.resblocks[j](x)
+            else:
+                xs = xs + self.resblocks[j](x)
+        mag = xs / 3
 
-        x = torch.complex(mag.log(), phase)
+        # mag = x.clamp(min=1e-7)
+        mag = self.post_conv(mag)
+
+        x = torch.complex(mag, phase)
         x = self.embed(x)
         if self.n_quantization != 0:
             x = self.q_pha(x)
