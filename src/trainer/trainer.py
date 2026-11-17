@@ -3,7 +3,7 @@ from pathlib import Path
 import pandas as pd
 import torch
 
-from src.logger.utils import plot_spectrogram
+from src.logger.utils import plot_spectrogram, plot_std_map, plot_freq_std
 from src.metrics.tracker import MetricTracker
 from src.trainer.base_trainer import BaseTrainer
 import torch.nn.functional as F
@@ -40,102 +40,112 @@ class Trainer(BaseTrainer):
         initial_sr = self.config.datasets.train.initial_sr
         target_sr = self.config.datasets.train.target_sr
 
-        wav_fake, outs = self.model.generator(initial_wav, initial_sr, target_sr, **batch)
-        
-        if target_wav.shape != wav_fake.shape:
-            wav_fake = torch.stack([F.pad(wav, (0, target_wav.shape[2] - wav_fake.shape[2]), value=0) for wav in wav_fake])
-        
-        batch["generated_wav"] = wav_fake
-        batch["generator_outs"] = outs
+        candidates = []
 
         if self.is_train:
-            self.disc_optimizer.zero_grad()
+            self.gen_optimizer.zero_grad()  
 
-        for disc_name, disc in self.model.discriminators.items():
-            detached_outs = [x.detach() for x in outs]
-            gt_out, _, fake_out, _ = disc(target_wav, wav_fake.detach(), generator_outs=detached_outs)
-            batch[f"{disc_name}_gt_out"] = gt_out
-            batch[f"{disc_name}_fake_out"] = fake_out
+        K = self.exploration
+        generator_loss = 0
+        best_rec_loss = None
+        mean_rec_loss = 0
 
-        disc_losses, disc_loss = self.criterion.discriminator_loss(batch)
+        for disc_name in self.model.discriminators.keys():    
+            batch[f"{disc_name}_feats_loss"] = 0
+            batch[f"{disc_name}_gen_adv_loss"] = 0
+
+        for _ in range(K):
+            wav_fake = self.model.generator(initial_wav, initial_sr, target_sr, **batch)
+            if target_wav.shape != wav_fake.shape:
+                wav_fake = torch.stack([F.pad(wav, (0, target_wav.shape[2] - wav_fake.shape[2]), value=0) for wav in wav_fake])
+                  
+            total_gan_loss = 0
+
+            if self.use_adversarial:
+                for disc_name, disc in self.model.discriminators.items():
+                    _, gt_feats, fake_out, fake_feats = disc(target_wav, wav_fake, **batch)
+                    adv_loss, feats_loss, gan_loss = self.criterion.exploration_adversarial_loss(gt_feats, fake_out, fake_feats)
+                    total_gan_loss += gan_loss / K
+
+                    batch[f"{disc_name}_feats_loss"] += feats_loss.detach().item() / K
+                    batch[f"{disc_name}_gen_adv_loss"] += adv_loss.detach().item() / K
+                    generator_loss += gan_loss.detach().item() / K
+
+                if self.is_train:
+                    total_gan_loss.backward(retain_graph=True)
+
+            B = initial_wav.shape[0]
+            if best_rec_loss is None:
+                best_rec_loss = torch.ones(B) * -1
+            for b in range(B):
+                cur_rec_loss = self.criterion.exploration_reconstruction_loss(wav_fake[b:b+1], target_wav[b:b+1])
+                mean_rec_loss += cur_rec_loss.detach().item()
+                if best_rec_loss[b] < 0 or cur_rec_loss < best_rec_loss[b]:
+                    best_rec_loss[b] = cur_rec_loss
+
+            candidates.append(wav_fake.detach())
+
+        generator_loss += best_rec_loss.mean().detach().item()
+        batch["best_reconstruction_loss"] = best_rec_loss.mean().detach().item()
+        batch["mean_reconstruction_loss"] = mean_rec_loss / (B * K)
+        batch["generator_loss"] = generator_loss
 
         if self.is_train:
-            disc_loss.backward()
-            for _, disc in self.model.discriminators.items():
-                self._clip_grad_norm(disc)     
-            self.disc_optimizer.step()
-            self.gen_optimizer.zero_grad()
-
-        # disc call for generator loss
-        for disc_name, disc in self.model.discriminators.items():
-            _, gt_feats, fake_out, fake_feats = disc(target_wav, wav_fake, **batch)
-            if not self.is_train:
-                disc.train()
-                batch[f"{disc_name}_step_1"] = self._get_audio_from_disc_grad(disc, step=1, **batch)
-                batch[f"{disc_name}_step_1_spec"] = self.create_spec(batch[f"{disc_name}_step_1"].squeeze(1))
-                batch[f"{disc_name}_step_5"] = self._get_audio_from_disc_grad(disc, step=5, **batch)
-                batch[f"{disc_name}_step_5_spec"] = self.create_spec(batch[f"{disc_name}_step_5"].squeeze(1))
-                disc.eval()
-
-            batch[f"{disc_name}_gt_feats"] = gt_feats
-            batch[f"{disc_name}_fake_out"] = fake_out
-            batch[f"{disc_name}_fake_feats"] = fake_feats
-
-        batch["mel_spec_fake"] = self.create_mel_spec(batch["generated_wav"].squeeze(1))
-        batch["mel_spec_hr"] = self.create_mel_spec(target_wav.squeeze(1))
-        batch["spec_hr"] = self.create_spec(target_wav.squeeze(1))
-        batch["spec_fake"] = self.create_spec(wav_fake.squeeze(1))
-        
-        adv_gen_losses, feats_gen_losses, mel_spec_loss, gen_loss = self.criterion.generator_loss(batch)
-
-        if self.is_train:
-            gen_loss.backward()
-            self._clip_grad_norm(self.model.generator)      
+            best_rec_loss.mean().backward()
+            self._clip_grad_norm(self.model.generator)
             self.gen_optimizer.step()
+            if self.use_adversarial:
+                self.disc_optimizer.zero_grad()
 
-        batch["disc_loss"] = disc_loss
+        for disc_name in self.model.discriminators.keys():      
+            batch[f"{disc_name}_disc_adv_loss"] = 0
+    
+        if self.use_adversarial:
+            for cand in candidates:
+                disc_loss = 0
+                for disc_name, disc in self.model.discriminators.items():
+                    gt_out, _, fake_out, _ = disc(target_wav, cand)
+                    gt_loss, fake_loss = self.criterion.exploration_discriminator_loss(gt_out, fake_out)
+                    disc_loss += gt_loss / K + fake_loss / K
 
-        batch.update(adv_gen_losses)
-        batch.update(feats_gen_losses)
-        batch.update(disc_losses)
-        batch["mel_spec_loss"] = mel_spec_loss
-        batch["gen_loss"] = gen_loss
+                    batch[f"{disc_name}_disc_adv_loss"] += gt_loss.detach().item() / K + fake_loss.detach().item() / K
 
-        for loss_name in self.config.writer.loss_names:
-            metrics.update(loss_name, batch[loss_name].item())
+                if self.is_train:
+                    disc_loss.backward()
+
+            if self.is_train:
+                for _, disc in self.model.discriminators.items():
+                    self._clip_grad_norm(disc)    
+                self.disc_optimizer.step()
+
+        batch["spec_gt"] = self.create_spec(target_wav.squeeze(1))
+        batch["spec_fake"] = self.create_spec(candidates[0].squeeze(1))
+        batch["generated_wav"] = candidates[0]
 
         if not self.is_train:
-            disc_name = list(self.model.discriminators.keys())[0]
-            calculate_all_metrics(batch['generated_wav'], batch['wav_hr'], self.metrics["inference"], self.config.datasets.val.initial_sr, self.config.datasets.val.target_sr)
-            calculate_all_metrics(batch[f"{disc_name}_step_1"], batch['wav_hr'], self.metrics["inference_step1"], self.config.datasets.val.initial_sr, self.config.datasets.val.target_sr)
-            calculate_all_metrics(batch[f"{disc_name}_step_5"], batch['wav_hr'], self.metrics["inference_step5"], self.config.datasets.val.initial_sr, self.config.datasets.val.target_sr)
+            S = self.std_estimation
+            if S < K:
+                samples = candidates[:S]
+            else:
+                samples = candidates.copy() # mix of exploration samples and new ones (only in val now)
+                for _ in range(S - K):
+                    wav_fake = self.model.generator(initial_wav, initial_sr, target_sr, **batch)
+                    if target_wav.shape != wav_fake.shape:
+                        wav_fake = torch.stack([F.pad(wav, (0, target_wav.shape[2] - wav_fake.shape[2]), value=0) for wav in wav_fake])
+                    samples.append(wav_fake)
+
+            batch["samples"] = samples
+
+        for loss_name in batch.keys():
+            if not loss_name.endswith("loss"):
+                continue
+            metrics.update(loss_name, batch[loss_name])
+
+        if not self.is_train:
+            _, std_maps = calculate_all_metrics(batch['generated_wav'], batch['wav_hr'], self.metrics["inference"], self.config.datasets.val.initial_sr, self.config.datasets.val.target_sr, **batch)
+            batch["std_maps"] = std_maps
 
         return batch
-
-    def _get_audio_from_disc_grad(self, disc, step=1, **batch):
-        x = batch["generated_wav"]
-
-        for _ in range(step):
-            x = self._get_audio_from_disc_grad_step(disc, x, **batch)
-
-        return x
-
-    def _get_audio_from_disc_grad_step(self, disc, current_outs, **batch):
-        current_outs.requires_grad_(True)
-
-        with torch.enable_grad():
-            _, _, dsc_output, _ = disc(current_outs, current_outs, **batch)
-            loss = 0.0
-            for predicted in dsc_output:
-                pred_loss = torch.mean((1 - predicted)**2)
-                loss += pred_loss
-            grad = torch.autograd.grad(loss, current_outs)[0]
-
-        # grad = grad / (grad.flatten(1).norm(dim=1, keepdim=True) + 1e-8)
-        eta = 3e-4
-        x = (current_outs - eta * grad).detach()
-
-        return x
 
     def _log_batch(self, batch_idx, batch, mode="train"):
         """
@@ -156,6 +166,7 @@ class Trainer(BaseTrainer):
         else:
             self.log_spectrogram(batch_idx, partition='val', **batch)
             self.log_audio(batch_idx, partition='val', **batch)
+            self.log_std_maps(batch_idx, partition='val', **batch)
 
 
     def log_audio(self, batch_idx, wav_lr, wav_hr, generated_wav, partition, **batch):
@@ -164,41 +175,22 @@ class Trainer(BaseTrainer):
             self.writer.add_audio(f"initial_wav_lr_{batch_idx}_{i}", wav_lr[i][:, :batch['initial_len_lr'][i]], self.config.datasets.val.initial_sr)
             self.writer.add_audio(f"initial_wav_hr_{batch_idx}_{i}", wav_hr[i][:, :batch['initial_len_hr'][i]], self.config.datasets.val.target_sr)
             self.writer.add_audio(f"generated_wav_{batch_idx}_{i}", generated_wav[i][:, :batch['initial_len_hr'][i]], self.config.datasets.val.target_sr)
-            for key, value in batch.items():
-                if key.endswith("step_1"):
-                    disc = key.split('_')[0]
-                    self.writer.add_audio(f"{disc}_shift_{batch_idx}_{i}_step_1", value[i][:, :batch['initial_len_hr'][i]], self.config.datasets.val.target_sr)
-                if key.endswith("step_5"):
-                    disc = key.split('_')[0]
-                    self.writer.add_audio(f"{disc}_shift_{batch_idx}_{i}_step_5", value[i][:, :batch['initial_len_hr'][i]], self.config.datasets.val.target_sr)
+            
 
-
-    def log_spectrogram(self, batch_idx, melspec_lr, melspec_hr, mel_spec_fake, partition, **batch):
-        actual_batch_size = min(self.config.dataloader.val.batch_size, len(melspec_lr))
+    def log_spectrogram(self, batch_idx, partition, **batch):
+        actual_batch_size = min(self.config.dataloader.val.batch_size, len(batch["spec_gt"]))
         for i in range(actual_batch_size):
-            for key, value in batch.items():
-                if key.endswith("step_1_spec"):
-                    disc = key.split('_')[0]
-                    image = plot_spectrogram(value[i].detach().cpu())
-                    self.writer.add_image(f"{batch_idx}_{i}_{disc}_shift_step_1_spec", image)
-                if key.endswith("step_5_spec"):
-                    disc = key.split('_')[0]
-                    image = plot_spectrogram(value[i].detach().cpu())
-                    self.writer.add_image(f"{batch_idx}_{i}_{disc}_shift_step_5_spec", image)
-
-            spectrogram_for_plot_real_lr = melspec_lr[i].detach().cpu()[:, :batch['initial_len_melspec_lr'][i]]
-            spectrogram_for_plot_real_hr = melspec_hr[i].detach().cpu()[:, :batch['initial_len_melspec_hr'][i]]
-            spectrogram_for_plot_fake = mel_spec_fake[i].detach().cpu()[:, :batch['initial_len_melspec_hr'][i]]
-            image = plot_spectrogram(spectrogram_for_plot_real_lr)
-            self.writer.add_image(f"melspectrogram_real_lr_{batch_idx}_{i}", image)
-            image_hr = plot_spectrogram(spectrogram_for_plot_real_hr)
-            self.writer.add_image(f"melspectrogram_real_hr_{batch_idx}_{i}", image_hr)
-            image_fake = plot_spectrogram(spectrogram_for_plot_fake)
-            self.writer.add_image(f"melspectrogram_fake_{batch_idx}_{i}", image_fake)
-
-            image_spec = plot_spectrogram(batch["spec_hr"][i].detach().cpu())
+            image_spec = plot_spectrogram(batch["spec_gt"][i].detach().cpu())
             self.writer.add_image(f"{batch_idx}_{i}_spectrogram_real_hr", image_spec)
             
             image_spec = plot_spectrogram(batch["spec_fake"][i].detach().cpu())
             self.writer.add_image(f"{batch_idx}_{i}_spectrogram_fake_hr", image_spec)
+
+    def log_std_maps(self, batch_idx, partition, **batch):
+        actual_batch_size = min(self.config.dataloader.val.batch_size, len(batch["spec_gt"]))
+        for i in range(actual_batch_size):
+            std_map = plot_std_map(batch["std_maps"].detach().cpu())
+            self.writer.add_image(f"{batch_idx}_{i}_std_map", std_map)
+            std_freq = plot_freq_std(batch["std_maps"].mean(-1).detach().cpu())
+            self.writer.add_image(f"{batch_idx}_{i}_std_freq", std_freq)
         

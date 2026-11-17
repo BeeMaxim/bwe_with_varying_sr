@@ -283,6 +283,38 @@ class LSD_HF(Metric):
         self.result["std"].append(np.std(lsd_hf))
 
 
+class SpecSTD(Metric):
+    name = "SPEC_STD"
+
+    def better(self, first, second):
+        return first < second
+    
+    def __call__(self, samples, **batch):
+        """
+        Compute LSD (log spectral distance)
+        Arguments:
+            out_sig: vector (torch.Tensor), enhanced signal [B,T]
+            ref_sig: vector (torch.Tensor), reference signal(ground truth) [B,T]
+        """
+        specs = []
+
+        for s in samples:
+            s = s.detach().cpu().numpy()
+            s = s[0, :]
+            s = librosa.util.normalize(s)
+            s = torch.from_numpy(s)[None, None].squeeze()
+            stft = STFTMag(2048, 512)
+            spec = torch.log10(stft(s).square().clamp(1e-8))
+            specs.append(spec)
+
+        std = torch.stack(specs).std(dim=0).mean()
+
+        self.result["mean"].append(std)
+        self.result["std"].append(0)
+        
+        return torch.stack(specs).std(dim=0)
+
+
 class STOI(Metric):
     name = "STOI"
 
@@ -393,8 +425,9 @@ class COVL(CSEMetric):
         self.func = lambda x, y: composite_eval(x, y)["covl"]
 
 
-def calculate_all_metrics(wavs, reference_wavs, metrics, initial_sr, target_sr, n_max_files=None):
+def calculate_all_metrics(wavs, reference_wavs, metrics, initial_sr, target_sr, n_max_files=None, **batch):
     scores = {metric.name: [] for metric in metrics}
+
     for x, y in tqdm(
         itertools.islice(zip(wavs, reference_wavs), n_max_files),
         total=n_max_files if n_max_files is not None else len(wavs),
@@ -411,11 +444,14 @@ def calculate_all_metrics(wavs, reference_wavs, metrics, initial_sr, target_sr, 
         x = torch.from_numpy(x)[None, None]
         y = torch.from_numpy(y)[None, None]
         for metric in metrics:
-            if metric.name.startswith('LSD_LF') or metric.name.startswith('LSD_HF'):
+            if metric.name == "SPEC_STD":
+                std_maps = metric.__call__(**batch)
+            elif metric.name.startswith('LSD_LF') or metric.name.startswith('LSD_HF'):
                 metric.__call__(x, y, initial_sr, target_sr)
             else:
                 metric.__call__(x, y)
             metric_name = metric.name
             scores[metric_name] += [np.mean(metric.result["mean"])]
     scores = {k: (np.mean(v), np.std(v)) for k, v in scores.items()}
-    return scores
+
+    return scores, std_maps

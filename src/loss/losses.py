@@ -9,12 +9,15 @@ class DiscriminatorLoss(nn.Module):
         super().__init__()
 
     def forward(self, disc_gt_output, disc_predicted_output):
-        loss = 0
+        total_gt_loss = 0
+        total_pred_loss = 0
         for gt_output, pred_output in zip(disc_gt_output, disc_predicted_output):
             gt_loss = torch.mean((1 - gt_output)**2)
             pred_loss = torch.mean(pred_output**2)
-            loss += gt_loss + pred_loss
-        return loss
+            total_gt_loss += gt_loss
+            total_pred_loss += pred_loss
+
+        return total_gt_loss, total_pred_loss
 
         
 class GeneratorLoss(nn.Module):
@@ -94,22 +97,26 @@ class HiFiGANLoss(nn.Module):
         feats_losses = {}
         total_loss = 0
 
-        for key in batch:
-            if key.endswith("fake_out"):
-                disc_name = key[:-9]
-                adv_gen_loss = self.gen_loss(batch[key])
-                feats_gen_loss = self.fm_loss(batch[f"{disc_name}_gt_feats"], batch[f"{disc_name}_fake_feats"])
-                adv_losses[f"{disc_name}_gen_loss"] = adv_gen_loss
-                feats_losses[f"{disc_name}_feats_gen_loss"] = feats_gen_loss
-                total_loss = total_loss + adv_gen_loss + 2 * feats_gen_loss
-
         # TODO computation of mel specs here with given melSpecComputer as an argument
         # for better generalization to other spectral losses
+        # gen_hr_loss, fake_gen_loss, gen_loss = self.criterion.generator_loss(batch)
         if self.loss_type == "msstft":
-            spec_loss = self.msstft_loss(batch["generated_wav"].squeeze(1), batch["wav_hr"].squeeze(1))
+            hr_spec_loss = self.msstft_loss(batch["generated_hr"].squeeze(1), batch["wav_hr"].squeeze(1))
+            fake_spec_loss = self.msstft_loss(batch["generated_wav"].squeeze(1), batch["wav_hr"].squeeze(1))
         elif self.loss_type == "melspec":
             spec_loss = self.melspec_loss(batch["mel_spec_hr"], batch["mel_spec_fake"])
 
-        total_loss = total_loss + 45 * spec_loss
+        total_loss = 45 * fake_spec_loss + 45 * hr_spec_loss
         
-        return adv_losses, feats_losses, spec_loss, total_loss
+        return hr_spec_loss, fake_spec_loss, total_loss
+
+    def exploration_adversarial_loss(self, gt_feats, fake_out, fake_feats):
+        adv_gen_loss = self.gen_loss(fake_out)
+        feats_gen_loss = self.fm_loss(gt_feats, fake_feats)
+        return adv_gen_loss, feats_gen_loss, adv_gen_loss + 2 * feats_gen_loss
+
+    def exploration_reconstruction_loss(self, wav_fake, target_wav):
+        return 45 * self.msstft_loss(wav_fake.squeeze(1), target_wav.squeeze(1))
+
+    def exploration_discriminator_loss(self, gt_out, fake_out):
+        return self.disc_loss(gt_out, fake_out)

@@ -1,0 +1,6 @@
+defaults:
+  - model: explore_ae
+  - _self_
+trainer:
+  device: auto
+  seed: 1

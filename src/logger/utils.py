@@ -66,3 +66,35 @@ def plot_spectrogram(spectrogram, name=None):
     plt.close()
 
     return image
+
+
+def plot_std_map(std_map, name=None):
+    plt.figure(figsize=(20, 5))
+    plt.pcolormesh(std_map)
+    plt.colorbar()
+    plt.title(name)
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png")
+    buf.seek(0)
+
+    image = PIL.Image.open(buf).convert("RGB")
+    plt.close()
+
+    return image
+
+
+def plot_freq_std(signal, name=None):
+    plt.figure(figsize=(20, 5))
+    plt.plot(signal)
+    plt.title(name)
+    plt.grid(True)
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png")
+    buf.seek(0)
+
+    image = PIL.Image.open(buf).convert("RGB")
+    plt.close()
+
+    return image

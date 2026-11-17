@@ -1,5 +1,5 @@
 defaults:
-  - model: model
+  - model: explore
   - writer: cometml
   - metrics: metrics
   - datasets: train_dataset
@@ -7,12 +7,12 @@ defaults:
   - _self_
 gen_optimizer:
   _target_: torch.optim.AdamW
-  lr: 3e-4
+  lr: 2e-4
   betas: [0.8, 0.99]
   weight_decay: 0.01
 disc_optimizer:
   _target_: torch.optim.AdamW
-  lr: 1e-4
+  lr: 2e-4
   betas: [0.8, 0.99]
   weight_decay: 0.01
 gen_lr_scheduler:
@@ -26,7 +26,7 @@ loss_function:
   loss_type: msstft # or melspec
   spectral_complex_loss: True # only for msstft
 trainer:
-  log_step: 200
+  log_step: 25
   n_epochs: 100
   epoch_len: 500
   device_tensors: ["wav_lr", "wav_hr", "reference_wav", "melspec_lr", "melspec_hr"] # which tensors should be on device (ex. GPU)
@@ -37,5 +37,8 @@ trainer:
   save_period: 5 # checkpoint each save_period epochs in addition to the best epoch
   early_stop: ${trainer.n_epochs} # epochs for early stopping
   save_dir: "saved_dir"
+  exploration: 16 # count of candidates for best-of-K
+  use_adversarial: False
+  std_estimation: 20
   seed: 1
   max_grad_norm: null

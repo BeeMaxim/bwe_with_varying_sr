@@ -67,6 +67,10 @@ class BaseTrainer:
         self.config = config
         self.cfg_trainer = self.config.trainer
 
+        self.exploration = self.config.trainer.exploration
+        self.use_adversarial = self.config.trainer.use_adversarial
+        self.std_estimation = self.config.trainer.std_estimation
+
         self.device = device
         self.skip_oom = skip_oom
 
@@ -129,8 +133,7 @@ class BaseTrainer:
         self.evaluation_metrics = MetricTracker(
             *self.config.writer.loss_names,
             *[m.name for m in self.metrics["inference"]],
-            *[m.name for m in self.metrics["inference_step1"]],
-            *[m.name for m in self.metrics["inference_step5"]],
+            *[m.name for m in self.metrics["inference_rec"]],
             writer=self.writer,
         )
 
@@ -198,9 +201,7 @@ class BaseTrainer:
                 this epoch.
         """
         self.is_train = True
-        self.model.generator.train()
-        for _, disc in self.model.discriminators.items():
-            disc.train()
+        self.model.train()
 
         self.train_metrics.reset()
         self.writer.set_step((epoch - 1) * self.epoch_len)
@@ -221,15 +222,18 @@ class BaseTrainer:
                     continue
                 else:
                     raise e
-            self.train_metrics.update("generator_grad_norm", self._get_grad_norm(self.model.generator.parameters()))
-            disc_params = itertools.chain(*[disc.parameters() for _, disc in self.model.discriminators.items()])
-            self.train_metrics.update("discriminator_grad_norm", self._get_grad_norm(disc_params))
+            self.train_metrics.update("generator_grad_norm", self._get_grad_norm(self.model.parameters()))
+            if self.use_adversarial:
+                disc_params = itertools.chain(*[disc.parameters() for _, disc in self.model.discriminators.items()])
+                self.train_metrics.update("discriminator_grad_norm", self._get_grad_norm(disc_params))
+            else:
+                self.train_metrics.update("discriminator_grad_norm", 0)
 
             if batch_idx % self.log_step == 0:
                 self.writer.set_step((epoch - 1) * self.epoch_len + batch_idx)
                 self.logger.debug(
-                    "Train Epoch: {} {} Generator Loss: {:.6f}, Discriminator Loss: {:.6f}".format(
-                        epoch, self._progress(batch_idx), batch["gen_loss"].item(), batch['disc_loss'].item()
+                    "Train Epoch: {} {} Generator Loss: {:.6f}".format(
+                        epoch, self._progress(batch_idx), batch["generator_loss"]
                     )
                 )
                 self.writer.add_scalar(
@@ -246,7 +250,8 @@ class BaseTrainer:
                 break
 
             self.gen_lr_scheduler.step()
-            self.disc_lr_scheduler.step()
+            if self.use_adversarial:
+                self.disc_lr_scheduler.step()
 
         logs = last_train_metrics
 
@@ -268,9 +273,7 @@ class BaseTrainer:
             logs (dict): logs that contain the information about evaluation.
         """
         self.is_train = False
-        self.model.generator.eval()
-        for _, disc in self.model.discriminators.items():
-            disc.eval()
+        self.model.eval()
 
         self.evaluation_metrics.reset()
         self.writer.mode = part
@@ -294,7 +297,7 @@ class BaseTrainer:
                     batch_idx, batch, part
                 )
 
-        for key in ['inference', 'inference_step1', 'inference_step5']:
+        for key in ['inference', 'inference_rec']:
             for i in range(len(self.metrics[key])):
                 self.evaluation_metrics.update(self.metrics[key][i].name, np.mean(self.metrics[key][i].result['mean']))
                 self.metrics[key][i].result['mean'] = []
@@ -465,8 +468,8 @@ class BaseTrainer:
             "epoch": epoch,
             "state_dict": self.model.state_dict(),
             "gen_optimizer": self.gen_optimizer.state_dict(),
-            "disc_optimizer": self.disc_optimizer.state_dict(),
             "gen_lr_scheduler": self.gen_lr_scheduler.state_dict(),
+            "disc_optimizer": self.disc_optimizer.state_dict(),
             "disc_lr_scheduler": self.disc_lr_scheduler.state_dict(),
             "monitor_best": self.mnt_best,
             "config": self.config,
@@ -511,9 +514,7 @@ class BaseTrainer:
 
         if (
             checkpoint["config"]["gen_optimizer"] != self.config["gen_optimizer"]
-            or checkpoint["config"]["disc_optimizer"] != self.config["disc_optimizer"]
             or checkpoint["config"]["gen_lr_scheduler"] != self.config["gen_lr_scheduler"]
-            or checkpoint["config"]["disc_lr_scheduler"] != self.config["disc_lr_scheduler"]
         ):
             self.logger.warning(
                 "Warning: Optimizer or lr_scheduler given in the config file is different "
@@ -522,8 +523,8 @@ class BaseTrainer:
             )
         else:
             self.gen_optimizer.load_state_dict(checkpoint["gen_optimizer"])
-            self.disc_optimizer.load_state_dict(checkpoint["disc_optimizer"])
             self.gen_lr_scheduler.load_state_dict(checkpoint["gen_lr_scheduler"])
+            self.disc_optimizer.load_state_dict(checkpoint["disc_optimizer"])
             self.disc_lr_scheduler.load_state_dict(checkpoint["disc_lr_scheduler"])
 
         self.logger.info(
@@ -552,7 +553,7 @@ class BaseTrainer:
             self.model.load_state_dict(checkpoint["state_dict"], strict=False)
         else:
             #self.model.load_state_dict(checkpoint)
-            self.model.generator.load_state_dict(checkpoint["generator"], strict=False)
+            self.model.load_state_dict(checkpoint["generator"], strict=False)
             # self.model.generator.load_state_dict(checkpoint["models"]["generator"]["state"])
         for m in self.model.modules():
             if isinstance(m, nn.Conv1d):

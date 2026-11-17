@@ -335,7 +335,7 @@ class ResBlock1(torch.nn.Module):
                 norm(
                     nn.Conv1d(
                         channels,
-                        channels,
+                        channels // 2,
                         kernel_size,
                         1,
                         dilation=dilation[0],
@@ -345,7 +345,7 @@ class ResBlock1(torch.nn.Module):
                 norm(
                     nn.Conv1d(
                         channels,
-                        channels,
+                        channels // 2,
                         kernel_size,
                         1,
                         dilation=dilation[1],
@@ -355,7 +355,7 @@ class ResBlock1(torch.nn.Module):
                 norm(
                     nn.Conv1d(
                         channels,
-                        channels,
+                        channels // 2,
                         kernel_size,
                         1,
                         dilation=dilation[2],
@@ -370,17 +370,7 @@ class ResBlock1(torch.nn.Module):
             [
                 norm(
                     nn.Conv1d(
-                        channels,
-                        channels,
-                        kernel_size,
-                        1,
-                        dilation=1,
-                        padding=get_padding(kernel_size, 1),
-                    )
-                ),
-                norm(
-                    nn.Conv1d(
-                        channels,
+                        channels // 2,
                         channels,
                         kernel_size,
                         1,
@@ -390,7 +380,17 @@ class ResBlock1(torch.nn.Module):
                 ),
                 norm(
                     nn.Conv1d(
+                        channels // 2,
                         channels,
+                        kernel_size,
+                        1,
+                        dilation=1,
+                        padding=get_padding(kernel_size, 1),
+                    )
+                ),
+                norm(
+                    nn.Conv1d(
+                        channels // 2,
                         channels,
                         kernel_size,
                         1,
@@ -408,7 +408,7 @@ class ResBlock1(torch.nn.Module):
                 [
                     TorchActivation1d(
                         activation=SnakeBeta(
-                            channels, alpha_logscale=True
+                            channels // 2 if _ % 2 == 1 else channels, alpha_logscale=True
                         )
                     ) if activation == "snake" else nn.LeakyReLU(LRELU_SLOPE)
 

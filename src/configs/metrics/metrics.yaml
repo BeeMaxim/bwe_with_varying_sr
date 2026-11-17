@@ -1,5 +1,7 @@
 train: []
 inference:
+  - _target_: src.metrics.SpecSTD
+    name: "SPEC_STD"
   - _target_: src.metrics.MOSNet
     name: "MOS"
   - _target_: src.metrics.ScaleInvariantSignalToDistortionRatio
@@ -24,16 +26,3 @@ inference:
     name: "CBAK"
   - _target_: src.metrics.COVL
     name: "COVL"
-
-inference_step1:
-  - _target_: src.metrics.MOSNet
-    name: "MOS_step1"
-  # - _target_: src.metrics.VGGDistance
-  #   name: "VGG_dist"
-
-
-inference_step5:
-  - _target_: src.metrics.MOSNet
-    name: "MOS_step5"
-  # - _target_: src.metrics.VGGDistance
-  #   name: "VGG_dist"

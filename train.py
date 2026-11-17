@@ -27,12 +27,12 @@ def main(config):
     project_config = OmegaConf.to_container(config)
     logger = setup_saving_and_logging(config)
     if config.writer.ignore_and_log_all:
-        config.writer.loss_names = ["gen_loss", "disc_loss", "mel_spec_loss"]
+        config.writer.loss_names = ["generator_loss", "best_reconstruction_loss", "mean_reconstruction_loss"]
         for disc_name in config.model.discriminators.keys():
-            config.writer.loss_names.append(f"{disc_name}_gen_loss")
-            config.writer.loss_names.append(f"{disc_name}_feats_gen_loss")
-            config.writer.loss_names.append(f"{disc_name}_disc_loss")
-
+            config.writer.loss_names.append(f"{disc_name}_feats_loss")
+            config.writer.loss_names.append(f"{disc_name}_gen_adv_loss")
+            config.writer.loss_names.append(f"{disc_name}_disc_adv_loss")
+    
     writer = instantiate(config.writer, logger, project_config)
 
     if config.trainer.device == "auto":
@@ -54,15 +54,15 @@ def main(config):
     # get function handles of loss and metrics
     loss_function = instantiate(config.loss_function).to(device)
 
-    metrics = {"train": [], "inference": [], "inference_step1": [], "inference_step5": []}
-    for metric_type in ["train", "inference", "inference_step1", "inference_step5"]:
+    metrics = {"train": [], "inference": [], "inference_rec": []}
+    for metric_type in ["train", "inference", "inference_rec"]:
         for metric_config in config.metrics.get(metric_type, []):
             # use text_encoder in metrics
             metrics[metric_type].append(
                 instantiate(metric_config)
             )
 
-    trainable_params_gen = filter(lambda p: p.requires_grad, model.generator.parameters())
+    trainable_params_gen = filter(lambda p: p.requires_grad, model.parameters())
     trainable_params_disc = []
     for _, disc in model.discriminators.items():
         trainable_params_disc += list(filter(lambda p: p.requires_grad, disc.parameters()))
